@@ -98,12 +98,12 @@ type Compute struct {
 
 // ResourceRequest corresponds to an object in the "resourceRequests" array.
 type ResourceRequest struct {
-	ID                string                   `json:"id"`
-	Zone              string                   `json:"zone"`
-	MachineType       string                   `json:"machineType"`
-	GuestAccelerators []map[string]interface{} `json:"guestAccelerators"`
-	Disks             []Disk                   `json:"disks"`
-	ProvisioningModel string                   `json:"provisioningModel"`
+	ID                string           `json:"id"`
+	Zone              string           `json:"zone"`
+	MachineType       string           `json:"machineType"`
+	GuestAccelerators []map[string]any `json:"guestAccelerators"`
+	Disks             []Disk           `json:"disks"`
+	ProvisioningModel string           `json:"provisioningModel"`
 }
 
 // Disk corresponds to a disk object.
