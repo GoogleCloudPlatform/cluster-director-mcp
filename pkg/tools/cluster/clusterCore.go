@@ -20,7 +20,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
-	"os/user"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -462,11 +461,6 @@ func GetDetailedJobInfoForAllRunningCDMcpJobsOfUserInCluster(projectId string,
 func GetRunningSlurmJobsForUserInCluster(projectId string, clusterName string, zone string, loginNode string) ([]int, string, bool) {
 	var runningJobIds []int
 
-	currentUser, err := user.Current()
-	if err != nil {
-		return runningJobIds, "Could not get user-id (login name/LDAP)", false
-	}
-
 	sqCmd := "squeue -u $USER -t  RUNNING "
 	sshOut, success := runSSHOnNode(loginNode, projectId, zone, sqCmd)
 	if !success {
@@ -478,9 +472,6 @@ func GetRunningSlurmJobsForUserInCluster(projectId string, clusterName string, z
 	// Sample Output of : squeue -u $USER -t RUNNING
 	// JOBID PARTITION     NAME     USER ST       TIME  NODES NODELIST(REASON)
 	// 147     part1 build-nc ext_xxxx  R       1:47      1 xxxx-nodeset1-0
-	if err != nil {
-		return runningJobIds, "Could not get running jobs for user " + currentUser.Username + " using: squeue -u " + currentUser.Username + " -t RUNNING", false
-	}
 
 	isNumericRegex := regexp.MustCompile(`^\d+$`)
 	scanner := bufio.NewScanner(strings.NewReader(sshOut))
