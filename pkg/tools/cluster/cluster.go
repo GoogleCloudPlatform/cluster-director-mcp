@@ -17,11 +17,9 @@ package cluster
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
-	"strconv"
 	"strings"
 	"time"
 
@@ -801,31 +799,6 @@ func verifyAndUpdateStatusOfRunningJobsOnClusterAndReturnListOfRunningJobs(proje
 	return returnMessage, returnSuccess
 }
 
-func getCDMcpJobIdFromFile(cdMcpScript string) (int, bool) {
-	fileH, err := os.Open(cdMcpScript)
-	if err != nil {
-		// If we can't open the log file, it's a fatal error, so we exit.
-		return -1, false
-	}
-	defer fileH.Close()
-
-	scanner := bufio.NewScanner(fileH)
-	for scanner.Scan() {
-		// Get the current line as a string
-		line := scanner.Text()
-		if strings.Contains(line, "CDMcpJobId:") {
-			fields := strings.Fields(line)
-			CDMcpJobId, err := strconv.Atoi(fields[1])
-			if err != nil {
-				genericcore.WriteToLog("getCDMcpJobIdFromFile Could not parse CDMcpJobId in line: " + line)
-				return -1, false
-			}
-			return CDMcpJobId, true
-		}
-	}
-	return -1, false
-}
-
 func checkCDMcpJobStatusCore(projectID string) (*mcp.CallToolResult, error) {
 	genericcore.WriteToLog("-------------------checkCDMcpJobStatusCore() -------------------")
 
@@ -917,48 +890,6 @@ func (h *handlers) listPartitionInfo(ctx context.Context, request mcp.CallToolRe
 	}
 
 	return mcp.NewToolResultText(sshOut), nil
-}
-
-// gcloudListItem represents a single item from the gcloud list command's JSON output.
-type gcloudListItem struct {
-	Name string `json:"name"`
-}
-
-// getGCloudRegionsAndZones fetches all available GCP regions and zones using the gcloud CLI.
-// It returns a list of region names, a list of zone names, and an error if one occurred.
-func getGCloudRegionsAndZones() ([]string, []string, error) {
-	regions, err := runGcloudListCommand("regions")
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to get regions: %w", err)
-	}
-
-	zones, err := runGcloudListCommand("zones")
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to get zones: %w", err)
-	}
-
-	return regions, zones, nil
-}
-
-// Executes a 'gcloud compute <resource> list' command and returns the names.
-func runGcloudListCommand(resource string) ([]string, error) {
-	cmd := exec.Command("gcloud", "compute", resource, "list", "--format=json")
-	output, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("gcloud command for %s failed: %w", resource, err)
-	}
-
-	var items []gcloudListItem
-	if err := json.Unmarshal(output, &items); err != nil {
-		return nil, fmt.Errorf("failed to parse gcloud output for %s: %w", resource, err)
-	}
-
-	names := make([]string, len(items))
-	for i, item := range items {
-		names[i] = item.Name
-	}
-
-	return names, nil
 }
 
 func filterString(rawSSHOut string, substringsToRemove []string) string {
