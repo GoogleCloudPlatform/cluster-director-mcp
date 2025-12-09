@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package genericCore
+package genericcore
 
 import (
 	"bufio"
@@ -131,8 +131,8 @@ func getUniqueLogFileName(logNameRoot string) string {
 
 func CreateUniqueFilePath(logNameRoot string) *os.File {
 	// Make the directory if it does not exist, fail silently
-	_ = os.MkdirAll(filepath.Dir(logNameRoot), 0755)
-	logFile, err := os.OpenFile(getUniqueLogFileName(logNameRoot), os.O_CREATE|os.O_WRONLY, 0666)
+	_ = os.MkdirAll(filepath.Dir(logNameRoot), 0o755)
+	logFile, err := os.OpenFile(getUniqueLogFileName(logNameRoot), os.O_CREATE|os.O_WRONLY, 0o666)
 	if err != nil {
 		// If we can't open the log file, it's a fatal error, so we exit.
 		return nil

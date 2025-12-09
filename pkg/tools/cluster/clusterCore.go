@@ -29,7 +29,7 @@ import (
 
 	compute "google.golang.org/api/compute/v0.alpha"
 
-	"github.com/GoogleCloudPlatform/cluster-director-mcp/pkg/genericCore"
+	"github.com/GoogleCloudPlatform/cluster-director-mcp/pkg/genericcore"
 	"github.com/GoogleCloudPlatform/cluster-director-mcp/pkg/persistence"
 )
 
@@ -169,7 +169,7 @@ func getGCloudToken() bool {
 		return true
 	}
 
-	genericCore.WriteToLog("Executing 'gcloud auth print-access-token' to get bearer token...")
+	genericcore.WriteToLog("Executing 'gcloud auth print-access-token' to get bearer token...")
 
 	// Prepare the command
 	cmd := exec.Command("gcloud", "auth", "print-access-token")
@@ -179,14 +179,14 @@ func getGCloudToken() bool {
 	if err != nil {
 		// If 'gcloud' is not installed or not in the PATH, this will fail.
 		// It can also fail if the user is not authenticated.
-		genericCore.WriteToLog(fmt.Sprintf("Error running gcloud command: %v", err))
+		genericcore.WriteToLog(fmt.Sprintf("Error running gcloud command: %v", err))
 		return false
 	}
 
 	// The output is a byte slice, so we convert it to a string and
 	// trim any trailing newline or whitespace.
 	authToken = strings.TrimSpace(string(output))
-	genericCore.WriteToLog("Successfully retrieved access token.")
+	genericcore.WriteToLog("Successfully retrieved access token.")
 	return true
 }
 
@@ -203,12 +203,12 @@ func getAllZonesInRegion(region string, projectID string, ctx context.Context, c
 	// The 'Do' method handles pagination for you. We process each page of results.
 	if err := req1.Pages(ctx, func(page *compute.ZoneList) error {
 		for _, zone := range page.Items {
-			genericCore.WriteToLog(zone.Name)
+			genericcore.WriteToLog(zone.Name)
 			zonesList = append(zonesList, zone.Name)
 		}
 		return nil
 	}); err != nil {
-		genericCore.WriteToLog(fmt.Sprintf("Error getting zones for project %s in region %s : %v",
+		genericcore.WriteToLog(fmt.Sprintf("Error getting zones for project %s in region %s : %v",
 			projectID, region, err))
 	}
 	return zonesList
@@ -236,9 +236,9 @@ func getAllRegionsAndZonesSupportedByHCS(projectID string) bool {
 	// https://hypercomputecluster.googleapis.com/v1alpha/projects/cloud-hypercomp-dev/locations/us-central1/clusters
 	url := "https://hypercomputecluster.googleapis.com/v1alpha/projects/" + projectID + "/locations/"
 
-	bodyJson, success := genericCore.QueryURLAndGetResult(authToken, url)
+	bodyJson, success := genericcore.QueryURLAndGetResult(authToken, url)
 	if !success {
-		genericCore.WriteToLog("Error getting list of zones supported by Cluster Director")
+		genericcore.WriteToLog("Error getting list of zones supported by Cluster Director")
 		return false
 	}
 
@@ -246,19 +246,19 @@ func getAllRegionsAndZonesSupportedByHCS(projectID string) bool {
 	// We pass the JSON string as a byte slice and a pointer to our variable.
 	err := json.Unmarshal([]byte(bodyJson), &locationData)
 	if err != nil {
-		genericCore.WriteToLog(fmt.Sprintf("Error unmarshaling JSON: %v", err))
+		genericcore.WriteToLog(fmt.Sprintf("Error unmarshaling JSON: %v", err))
 		return false
 	}
 
 	ctx := context.Background()
 	computeService, err := compute.NewService(ctx)
 	if err != nil {
-		genericCore.WriteToLog(fmt.Sprintf("Error calling compute.NewSerice() API: %v", err))
+		genericcore.WriteToLog(fmt.Sprintf("Error calling compute.NewSerice() API: %v", err))
 		return false
 	}
 	// Now you can access the data through the struct
 	for _, loc := range locationData.Locations {
-		genericCore.WriteToLog("Region: " + loc.LocationID)
+		genericcore.WriteToLog("Region: " + loc.LocationID)
 		regions2Zones[loc.LocationID] = getAllZonesInRegion(loc.LocationID, projectID, ctx, computeService)
 	}
 
@@ -278,7 +278,7 @@ func getZoneForCluster(projectID string, clusterName string) string {
 		if exists {
 			return zone
 		} else {
-			genericCore.WriteToLog("Error getting zone for cluster " + clusterName + " in project " + projectID)
+			genericcore.WriteToLog("Error getting zone for cluster " + clusterName + " in project " + projectID)
 			return ""
 		}
 	}
@@ -286,18 +286,18 @@ func getZoneForCluster(projectID string, clusterName string) string {
 
 func getClustersInAllRegions(projectID string) string {
 	var listOfClusters string = "["
-	genericCore.WriteToLog(fmt.Sprintf("Getting clusters in all regions for projectId : %s", projectID))
+	genericcore.WriteToLog(fmt.Sprintf("Getting clusters in all regions for projectId : %s", projectID))
 	for region := range regions2Zones {
-		genericCore.WriteToLog(fmt.Sprintf("Getting clusters in region : %s", region))
+		genericcore.WriteToLog(fmt.Sprintf("Getting clusters in region : %s", region))
 		getClustersInRegionIfExists(region, projectID)
 		for _, clusterName := range region2ClusterNames[region] {
-			genericCore.WriteToLog(fmt.Sprintf("Found cluster : %s", clusterName))
+			genericcore.WriteToLog(fmt.Sprintf("Found cluster : %s", clusterName))
 			listOfClusters += string("\"" + clusterName + "\", ")
 		}
 	}
 	listOfClusters = strings.TrimSuffix(listOfClusters, ", ")
 	listOfClusters += "]"
-	genericCore.WriteToLog(fmt.Sprintf("Final list of clusters in all regions in project %s : %s ", projectID, listOfClusters))
+	genericcore.WriteToLog(fmt.Sprintf("Final list of clusters in all regions in project %s : %s ", projectID, listOfClusters))
 
 	return listOfClusters
 }
@@ -309,16 +309,16 @@ func getClustersInRegionIfExists(region string, projectID string) {
 	// -H "Authorization: Bearer $(gcloud auth print-access-token)" \
 	// https://hypercomputecluster.googleapis.com/v1alpha/projects/cloud-hypercomp-dev/locations/us-central1/clusters
 	url := "https://hypercomputecluster.googleapis.com/v1alpha/projects/" + projectID + "/locations/" + region + "/clusters"
-	genericCore.WriteToLog(fmt.Sprintf("getClustersInRegionIfExists - Getting clusters in region %s URL : %s", region, url))
+	genericcore.WriteToLog(fmt.Sprintf("getClustersInRegionIfExists - Getting clusters in region %s URL : %s", region, url))
 
 	// Remove all previous data about clusters in this region
 	region2ClusterNames[region] = []string{}
 
-	bodyString, success := genericCore.QueryURLAndGetResult(authToken, url)
-	genericCore.WriteToLog(fmt.Sprintf("Response from Cluster Director API on the clusters in region %s : %s ", region, string(bodyString)))
+	bodyString, success := genericcore.QueryURLAndGetResult(authToken, url)
+	genericcore.WriteToLog(fmt.Sprintf("Response from Cluster Director API on the clusters in region %s : %s ", region, string(bodyString)))
 	// If the body has "storages" than that means it is a cluster
 	if success && strings.Contains(bodyString, "storages") {
-		genericCore.WriteToLog("Trying to parse JSON...")
+		genericcore.WriteToLog("Trying to parse JSON...")
 		var parsedClusterData ClustersResponse
 		err := json.Unmarshal([]byte(bodyString), &parsedClusterData)
 
@@ -326,15 +326,15 @@ func getClustersInRegionIfExists(region string, projectID string) {
 		MostRecentClusterData[region] = &parsedClusterData
 
 		if err != nil {
-			genericCore.WriteToLog(fmt.Sprintf("Error unmarshalling JSON: %v", err))
+			genericcore.WriteToLog(fmt.Sprintf("Error unmarshalling JSON: %v", err))
 		} else {
-			genericCore.WriteToLog(fmt.Sprintf("Number of elements in parsedClusterData.Clusters: %d", len(MostRecentClusterData[region].Clusters)))
+			genericcore.WriteToLog(fmt.Sprintf("Number of elements in parsedClusterData.Clusters: %d", len(MostRecentClusterData[region].Clusters)))
 			for i := range MostRecentClusterData[region].Clusters {
 				clusterName := filepath.Base(MostRecentClusterData[region].Clusters[i].Name)
-				genericCore.WriteToLog(fmt.Sprintf("Processing JSON data for cluster : %s", clusterName))
+				genericcore.WriteToLog(fmt.Sprintf("Processing JSON data for cluster : %s", clusterName))
 				for j := range MostRecentClusterData[region].Clusters[i].Compute.ResourceRequests {
 					clusterZone := MostRecentClusterData[region].Clusters[i].Compute.ResourceRequests[j].Zone
-					genericCore.WriteToLog(fmt.Sprintf("Zone for cluster : %s", clusterZone))
+					genericcore.WriteToLog(fmt.Sprintf("Zone for cluster : %s", clusterZone))
 					clusterNames2Zone[clusterName] = clusterZone
 				}
 				region2ClusterNames[region] = append(region2ClusterNames[region], clusterName)
@@ -342,7 +342,7 @@ func getClustersInRegionIfExists(region string, projectID string) {
 			}
 		}
 	} else {
-		genericCore.WriteToLog("The response body does not contain the substring 'storages'.")
+		genericcore.WriteToLog("The response body does not contain the substring 'storages'.")
 	}
 }
 
@@ -370,7 +370,7 @@ type PartitionInfo struct {
 }
 
 func parseOutputofSlurmSinfoCmdAndReturnPartitions(output string) (map[string][]string, map[string]struct{}, bool) {
-	genericCore.WriteToLog("Raw output from sinfo : " + output)
+	genericcore.WriteToLog("Raw output from sinfo : " + output)
 
 	partitions := make(map[string][]string)
 	clusterStates := make(map[string]struct{})
@@ -385,7 +385,7 @@ func parseOutputofSlurmSinfoCmdAndReturnPartitions(output string) (map[string][]
 
 	// Iterate over the lines, skipping the header at index 0.
 	for _, line := range lines[1:] {
-		genericCore.WriteToLog("Parsing sinfo line: " + line)
+		genericcore.WriteToLog("Parsing sinfo line: " + line)
 		if strings.Contains(line, "PARTITION") {
 			continue
 		}
@@ -397,7 +397,7 @@ func parseOutputofSlurmSinfoCmdAndReturnPartitions(output string) (map[string][]
 
 		// trim any chars that is not alphabet or letter
 		partitionName := strings.TrimRightFunc(fields[0], func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsNumber(r) })
-		genericCore.WriteToLog("Parsed partition name : " + partitionName)
+		genericcore.WriteToLog("Parsed partition name : " + partitionName)
 
 		partitions[partitionName] = append(partitions[partitionName], fields[5])
 
@@ -427,8 +427,8 @@ func GetDetailedJobInfoForAllRunningCDMcpJobsOfUserInCluster(projectId string,
 		sshOut, success := runSSHOnNode(loginNode, projectId, zone, scontrolCmd)
 		if !success {
 			s := string(fmt.Sprintf("Could not run scontrol to get info for job %d", slurmJobId) +
-				" on login node " + loginNode + " in cluster " + clusterName + " in project " + projectId + "\n" + genericCore.GetLastLines(sshOut, 10))
-			genericCore.WriteToLog(s)
+				" on login node " + loginNode + " in cluster " + clusterName + " in project " + projectId + "\n" + genericcore.GetLastLines(sshOut, 10))
+			genericcore.WriteToLog(s)
 			return jobDataMap, false, s
 		}
 
@@ -445,17 +445,17 @@ func GetDetailedJobInfoForAllRunningCDMcpJobsOfUserInCluster(projectId string,
 			// 5. Convert the string to an integer
 			CDMcpJobId, err := strconv.Atoi(numStr)
 			if err != nil {
-				genericCore.WriteToLog(fmt.Sprintf("Error converting matched string to integer: %v", err.Error()))
+				genericcore.WriteToLog(fmt.Sprintf("Error converting matched string to integer: %v", err.Error()))
 				continue
 			}
-			genericCore.WriteToLog(fmt.Sprintf("Cluster Director MCP JobId CDMcpJobId : %d", CDMcpJobId))
+			genericcore.WriteToLog(fmt.Sprintf("Cluster Director MCP JobId CDMcpJobId : %d", CDMcpJobId))
 			jobDataMap[CDMcpJobId] = slurmJobId
 		} else {
-			genericCore.WriteToLog("")
+			genericcore.WriteToLog("")
 		}
 	}
 
-	genericCore.WriteToLog(fmt.Sprintf("Returning %d jobs \n", len(jobDataMap)))
+	genericcore.WriteToLog(fmt.Sprintf("Returning %d jobs \n", len(jobDataMap)))
 	return jobDataMap, true, ""
 }
 
@@ -470,9 +470,9 @@ func GetRunningSlurmJobsForUserInCluster(projectId string, clusterName string, z
 	sqCmd := "squeue -u $USER -t  RUNNING "
 	sshOut, success := runSSHOnNode(loginNode, projectId, zone, sqCmd)
 	if !success {
-		genericCore.WriteToLog("GetRunningSlurmJobsForUserInCluster.3333")
+		genericcore.WriteToLog("GetRunningSlurmJobsForUserInCluster.3333")
 		return runningJobIds, "Could not run squeue to get running jobs on " +
-			loginNode + " in cluster " + clusterName + " in project " + projectId + "\n" + genericCore.GetLastLines(sshOut, 10), false
+			loginNode + " in cluster " + clusterName + " in project " + projectId + "\n" + genericcore.GetLastLines(sshOut, 10), false
 	}
 
 	// Sample Output of : squeue -u $USER -t RUNNING
@@ -495,14 +495,14 @@ func GetRunningSlurmJobsForUserInCluster(projectId string, clusterName string, z
 		if isNumericRegex.MatchString(fields[0]) {
 			jobId, err := strconv.Atoi(fields[0])
 			if err != nil {
-				genericCore.WriteToLog("Error converting " + fields[0] + " to integer")
+				genericcore.WriteToLog("Error converting " + fields[0] + " to integer")
 				continue
 			}
 			runningJobIds = append(runningJobIds, jobId)
 		}
 	}
 
-	genericCore.WriteToLog(fmt.Sprintf("Number of running jobs: %d", len(runningJobIds)))
+	genericcore.WriteToLog(fmt.Sprintf("Number of running jobs: %d", len(runningJobIds)))
 	return runningJobIds, "", true
 }
 
@@ -511,15 +511,15 @@ func GetMachineTypeForCluster(projectId string, clusterName string) []string {
 
 	var machineTypes []string
 
-	genericCore.WriteToLog("Trying to determine machine for cluster " + clusterName)
+	genericcore.WriteToLog("Trying to determine machine for cluster " + clusterName)
 	for region := range MostRecentClusterData {
-		genericCore.WriteToLog("Looking for cluster info in region region : " + region)
+		genericcore.WriteToLog("Looking for cluster info in region region : " + region)
 		for i := range MostRecentClusterData[region].Clusters {
 			if clusterName != filepath.Base(MostRecentClusterData[region].Clusters[i].Name) {
-				genericCore.WriteToLog("Ignoring because of name mismatch " + MostRecentClusterData[region].Clusters[i].Name)
+				genericcore.WriteToLog("Ignoring because of name mismatch " + MostRecentClusterData[region].Clusters[i].Name)
 				continue
 			}
-			genericCore.WriteToLog("Found cluster " + MostRecentClusterData[region].Clusters[i].Name)
+			genericcore.WriteToLog("Found cluster " + MostRecentClusterData[region].Clusters[i].Name)
 			for j := range MostRecentClusterData[region].Clusters[i].Compute.ResourceRequests {
 				if MostRecentClusterData[region].Clusters[i].Compute.ResourceRequests[j].MachineType != "" {
 					machineTypes = append(machineTypes, MostRecentClusterData[region].Clusters[i].Compute.ResourceRequests[j].MachineType)
@@ -528,6 +528,6 @@ func GetMachineTypeForCluster(projectId string, clusterName string) []string {
 		}
 	}
 
-	genericCore.WriteToLog(fmt.Sprintf("Returning %d machineTypes", len(machineTypes)))
+	genericcore.WriteToLog(fmt.Sprintf("Returning %d machineTypes", len(machineTypes)))
 	return machineTypes
 }

@@ -26,7 +26,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/GoogleCloudPlatform/cluster-director-mcp/pkg/genericCore"
+	"github.com/GoogleCloudPlatform/cluster-director-mcp/pkg/genericcore"
 )
 
 const UNDEFINED_VAL = -1
@@ -133,17 +133,17 @@ func CreatePersistenceRootDir() bool {
 	persistenceRootDir += "/.cluster-director-mcp"
 	jobsFile = persistenceRootDir + "/jobs_history.json"
 
-	if genericCore.CheckFileOrDirExists(persistenceRootDir, true) {
+	if genericcore.CheckFileOrDirExists(persistenceRootDir, true) {
 		return true
 	}
 
 	err := os.MkdirAll(persistenceRootDir, 0o755)
 	if err != nil {
-		genericCore.WriteToLog(fmt.Sprintf("Failed to create persistence directory: %v", err))
+		genericcore.WriteToLog(fmt.Sprintf("Failed to create persistence directory: %v", err))
 		return false
 	}
 
-	genericCore.WriteToLog(fmt.Sprintf("Successfully created persistence directory: %s", persistenceRootDir))
+	genericcore.WriteToLog(fmt.Sprintf("Successfully created persistence directory: %s", persistenceRootDir))
 	return true
 }
 
@@ -153,26 +153,26 @@ func CreateJobPersistenceFile() bool {
 
 	// 2. Check if the error is "file not found"
 	if os.IsNotExist(err) {
-		genericCore.WriteToLog(fmt.Sprintf("cluster-director-mcp job history file does not exist. Creating: %s", jobsFile))
+		genericcore.WriteToLog(fmt.Sprintf("cluster-director-mcp job history file does not exist. Creating: %s", jobsFile))
 
 		// 3. Create the file
 		// os.Create() creates a file and opens it for writing.
 		// We'll close it immediately since we just want to create it.
 		file, createErr := os.Create(jobsFile)
 		if createErr != nil {
-			genericCore.WriteToLog(fmt.Sprintf("Failed to create cluster-director-mcp job history file: %v", createErr))
+			genericcore.WriteToLog(fmt.Sprintf("Failed to create cluster-director-mcp job history file: %v", createErr))
 		}
 		file.Close() // Don't forget to close the file
 
-		genericCore.WriteToLog(fmt.Sprintf("cluster-director-mcp job history file created successfully : %s", jobsFile))
+		genericcore.WriteToLog(fmt.Sprintf("cluster-director-mcp job history file created successfully : %s", jobsFile))
 		return true
 	} else if err != nil {
 		// 4. A different error occurred (e.g., permission denied)
-		genericCore.WriteToLog(fmt.Sprintf("Error checking if cluster-director-mcp job history file exists %s : %v", jobsFile, err))
+		genericcore.WriteToLog(fmt.Sprintf("Error checking if cluster-director-mcp job history file exists %s : %v", jobsFile, err))
 		return false
 	} else {
 		// 5. File already exists
-		genericCore.WriteToLog(fmt.Sprintf("cluster-director-mcp job history file already exists: %s", jobsFile))
+		genericcore.WriteToLog(fmt.Sprintf("cluster-director-mcp job history file already exists: %s", jobsFile))
 	}
 
 	return true
@@ -218,13 +218,13 @@ func WriteAllJobData() bool {
 
 	jsonMarshalled, err := json.MarshalIndent(AllLongRunningJobs, "", "  ")
 	if err != nil {
-		genericCore.WriteToLog(fmt.Sprintf("Error marshaling JSON: %v", err))
+		genericcore.WriteToLog(fmt.Sprintf("Error marshaling JSON: %v", err))
 		return false
 	}
 
 	err = os.WriteFile(jobsFile, jsonMarshalled, 0o644)
 	if err != nil {
-		genericCore.WriteToLog(fmt.Sprintf("Error writing to file: %v", err))
+		genericcore.WriteToLog(fmt.Sprintf("Error writing to file: %v", err))
 	}
 
 	return true
@@ -247,33 +247,33 @@ func readJobData() ([]LongRunningJob, bool) {
 	AllLongRunningJobs = AllLongRunningJobs[:0]
 
 	if !initPersistenceLayerCore() {
-		genericCore.WriteToLog("Could not initialize persistence layer")
+		genericcore.WriteToLog("Could not initialize persistence layer")
 		return AllLongRunningJobs, false
 	}
 
 	fileInfo, err := os.Stat(jobsFile)
 	if err != nil {
-		genericCore.WriteToLog(fmt.Sprintf("Error running \"stat\" on cluster-director-mcp job history file %s : %v", jobsFile, err))
+		genericcore.WriteToLog(fmt.Sprintf("Error running \"stat\" on cluster-director-mcp job history file %s : %v", jobsFile, err))
 		return AllLongRunningJobs, false
 	}
 
 	// Empty file?
 	if fileInfo.Size() == 0 {
-		genericCore.WriteToLog(fmt.Sprintf("cluster-director-mcp job history file exists but is empty : %s", jobsFile))
+		genericcore.WriteToLog(fmt.Sprintf("cluster-director-mcp job history file exists but is empty : %s", jobsFile))
 		return AllLongRunningJobs, true
 	}
 
 	// Read JSON
 	data, err := os.ReadFile(jobsFile)
 	if err != nil {
-		genericCore.WriteToLog(fmt.Sprintf("Error reading cluster-director-mcp job history file %s : %v", jobsFile, err))
+		genericcore.WriteToLog(fmt.Sprintf("Error reading cluster-director-mcp job history file %s : %v", jobsFile, err))
 		return AllLongRunningJobs, false
 	}
 
 	// Parse JSON
 	err = json.Unmarshal(data, &AllLongRunningJobs)
 	if err != nil {
-		genericCore.WriteToLog(fmt.Sprintf("Error parsing cluster-director-mcp job history JSON: %v", err))
+		genericcore.WriteToLog(fmt.Sprintf("Error parsing cluster-director-mcp job history JSON: %v", err))
 		return AllLongRunningJobs, false
 	}
 
@@ -284,13 +284,13 @@ func GetUniqueJobID() (int, bool) {
 	//_, readSuccess := ReadJobData()
 	readSuccess := initPersistenceLayer()
 	if !readSuccess {
-		genericCore.WriteToLog("Could not initialize persistence layer")
+		genericcore.WriteToLog("Could not initialize persistence layer")
 		return -1, false
 	}
 
 	// There are no jobs, this is the first job
 	if len(AllLongRunningJobs) == 0 {
-		genericCore.WriteToLog("Persistence layer did not read any running jobs")
+		genericcore.WriteToLog("Persistence layer did not read any running jobs")
 		return 1, true
 	}
 
@@ -302,25 +302,25 @@ func GetUniqueJobID() (int, bool) {
 		}
 	}
 
-	genericCore.WriteToLog(fmt.Sprintf("Returning unique job Id : %d \n", (maxCDMcpJobId + 1)))
+	genericcore.WriteToLog(fmt.Sprintf("Returning unique job Id : %d \n", (maxCDMcpJobId + 1)))
 	return int(maxCDMcpJobId + 1), true
 }
 
 func GetMostRecentJob(projectId string) (*LongRunningJob, bool, string) {
 	var retObj *LongRunningJob = nil
 
-	genericCore.WriteToLog("Getting recent jobs for project " + projectId)
+	genericcore.WriteToLog("Getting recent jobs for project " + projectId)
 
 	// Read Job data
 	readSuccess := initPersistenceLayer()
 	if !readSuccess {
-		genericCore.WriteToLog("Could not read job data from persistence layer. Did the user delete ~/.cluster-director-mcp ?")
+		genericcore.WriteToLog("Could not read job data from persistence layer. Did the user delete ~/.cluster-director-mcp ?")
 		return nil, false, "Could not read job data from persistence layer. Did you delete ~/.cluster-director-mcp ?"
 	}
 
 	// There are no jobs
 	if len(AllLongRunningJobs) == 0 {
-		genericCore.WriteToLog("Persistence layer did not read any running jobs from disk")
+		genericcore.WriteToLog("Persistence layer did not read any running jobs from disk")
 		return nil, true, "Persistence layer did not read any running jobs from disk!"
 	}
 
@@ -329,13 +329,13 @@ func GetMostRecentJob(projectId string) (*LongRunningJob, bool, string) {
 		return &AllLongRunningJobs[0], true, ""
 	}
 
-	genericCore.WriteToLog(fmt.Sprintf("Read %d jobs from persistence layer", len(AllLongRunningJobs)))
+	genericcore.WriteToLog(fmt.Sprintf("Read %d jobs from persistence layer", len(AllLongRunningJobs)))
 
 	// Compute time window
 	startOfTimeWindow := time.Now().Add(-JOB_EXPIRY_TIME_WINDOW)
 
 	for i := 0; i < len(AllLongRunningJobs); i++ {
-		genericCore.WriteToLog(fmt.Sprintf("Processing Cluster Director MCP JobId : %d \n", AllLongRunningJobs[i].CDMcpJobId))
+		genericcore.WriteToLog(fmt.Sprintf("Processing Cluster Director MCP JobId : %d \n", AllLongRunningJobs[i].CDMcpJobId))
 
 		if AllLongRunningJobs[i].ProjectId != projectId {
 			continue
@@ -343,7 +343,7 @@ func GetMostRecentJob(projectId string) (*LongRunningJob, bool, string) {
 
 		// If this job was not submitted within the time window ignore it
 		if startOfTimeWindow.After(AllLongRunningJobs[i].StartTime) {
-			genericCore.WriteToLog(fmt.Sprintf("Ignoring Cluster Director MCP JobId %d outside of time window", AllLongRunningJobs[i].CDMcpJobId))
+			genericcore.WriteToLog(fmt.Sprintf("Ignoring Cluster Director MCP JobId %d outside of time window", AllLongRunningJobs[i].CDMcpJobId))
 			continue
 		}
 
@@ -360,9 +360,9 @@ func GetMostRecentJob(projectId string) (*LongRunningJob, bool, string) {
 	}
 
 	if retObj != nil {
-		genericCore.WriteToLog(fmt.Sprintf("Returning Cluster Director JobId : %d ", retObj.CDMcpJobId))
+		genericcore.WriteToLog(fmt.Sprintf("Returning Cluster Director JobId : %d ", retObj.CDMcpJobId))
 	} else {
-		genericCore.WriteToLog("Could not find a job in \"recent\" time window")
+		genericcore.WriteToLog("Could not find a job in \"recent\" time window")
 	}
 
 	return retObj, true, ""
@@ -372,13 +372,13 @@ func GetMostRecentRunningOrCompletedJob(projectId string) (*LongRunningJob, bool
 	// First try to get the latest "running" jobs
 	recentRunningOrCompletedJobs, success, mesg := GetALLRecentRunningJobs(projectId, false)
 	if !success {
-		genericCore.WriteToLog("Could not get recently running jobs")
+		genericcore.WriteToLog("Could not get recently running jobs")
 		return nil, false, mesg
 	}
 
 	// If there were no RUNNING jobs, so fetch the most recent jobs that have completed
 	if len(recentRunningOrCompletedJobs) == 0 {
-		genericCore.WriteToLog("There were no recently running jobs, ignoring running status and getting most recent job")
+		genericcore.WriteToLog("There were no recently running jobs, ignoring running status and getting most recent job")
 		recentRunningOrCompletedJobs, _, _ = GetALLRecentRunningJobs(projectId, true)
 	}
 
@@ -406,7 +406,7 @@ func GetAllLongRunningJobsInCluster(projectId string, clusterName string) ([]int
 	if !persistenceLayerReady {
 		success := initPersistenceLayer()
 		if !success {
-			genericCore.WriteToLog("Could initialize persistence layer")
+			genericcore.WriteToLog("Could initialize persistence layer")
 			return nil, false, "Could initialize persistence layer"
 		}
 	}
@@ -427,13 +427,13 @@ func GetALLRecentRunningJobs(projectId string, ignoreRunningStatus bool) ([]int,
 	//_, readSuccess := ReadJobData()
 	readSuccess := initPersistenceLayer()
 	if !readSuccess {
-		genericCore.WriteToLog("Could initialize persistence layer")
+		genericcore.WriteToLog("Could initialize persistence layer")
 		return allRecentRunningJobIndices, false, "Could not read job data from persistence layer. Did you delete ~/.cluster-director-mcp ?"
 	}
 
 	// There are no jobs
 	if len(AllLongRunningJobs) == 0 {
-		genericCore.WriteToLog("There were no jobs recorded in persistence layer!")
+		genericcore.WriteToLog("There were no jobs recorded in persistence layer!")
 		return allRecentRunningJobIndices, false, "There were no jobs recorded in persistence layer!"
 	}
 

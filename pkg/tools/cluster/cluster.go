@@ -29,7 +29,7 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/GoogleCloudPlatform/cluster-director-mcp/pkg/config"
-	"github.com/GoogleCloudPlatform/cluster-director-mcp/pkg/genericCore"
+	"github.com/GoogleCloudPlatform/cluster-director-mcp/pkg/genericcore"
 	"github.com/GoogleCloudPlatform/cluster-director-mcp/pkg/persistence"
 )
 
@@ -156,13 +156,13 @@ func Install(s *server.MCPServer, c *config.Config) {
 const LOCAL_HOST_SCRATCH_DIR = "cluster-director-mcp.scratch"
 
 func createScratchDir() bool {
-	if genericCore.CheckFileOrDirExists(LOCAL_HOST_SCRATCH_DIR, true) {
+	if genericcore.CheckFileOrDirExists(LOCAL_HOST_SCRATCH_DIR, true) {
 		return true
 	}
 
 	err := os.MkdirAll(LOCAL_HOST_SCRATCH_DIR, 0o755)
 	if err != nil {
-		genericCore.WriteToLog(fmt.Sprintf("Failed to create scrarch directory: %s %v", LOCAL_HOST_SCRATCH_DIR, err))
+		genericcore.WriteToLog(fmt.Sprintf("Failed to create scrarch directory: %s %v", LOCAL_HOST_SCRATCH_DIR, err))
 		return false
 	}
 
@@ -171,8 +171,8 @@ func createScratchDir() bool {
 
 func (h *handlers) listClusters(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	projectID := h.c.GetDefaultProjectID()
-	genericCore.WriteToLog("-------------------listClusters()-------------------")
-	genericCore.WriteToLog("projectId : " + projectID)
+	genericcore.WriteToLog("-------------------listClusters()-------------------")
+	genericcore.WriteToLog("projectId : " + projectID)
 
 	return mcp.NewToolResultText(getClustersInAllRegions(h.c.GetDefaultProjectID())), nil
 }
@@ -183,9 +183,9 @@ func (h *handlers) getCluster(ctx context.Context, request mcp.CallToolRequest) 
 		return mcp.NewToolResultText("Need cluster name"), nil
 	}
 	projectID := h.c.GetDefaultProjectID()
-	genericCore.WriteToLog("-------------------getCluster()-------------------")
-	genericCore.WriteToLog("projectId : " + projectID)
-	genericCore.WriteToLog("clusterName : " + clusterName)
+	genericcore.WriteToLog("-------------------getCluster()-------------------")
+	genericcore.WriteToLog("projectId : " + projectID)
+	genericcore.WriteToLog("clusterName : " + clusterName)
 
 	// If there is no information, fetch it
 	getClustersInAllRegions(h.c.GetDefaultProjectID())
@@ -202,9 +202,9 @@ func (h *handlers) checkMaintenanceEvents(ctx context.Context, request mcp.CallT
 		return mcp.NewToolResultText("Need cluster name"), nil
 	}
 	projectID := h.c.GetDefaultProjectID()
-	genericCore.WriteToLog("-------------------checkMaintenanceEvents()-------------------")
-	genericCore.WriteToLog("projectId : " + projectID)
-	genericCore.WriteToLog("clusterName : " + clusterName)
+	genericcore.WriteToLog("-------------------checkMaintenanceEvents()-------------------")
+	genericcore.WriteToLog("projectId : " + projectID)
+	genericcore.WriteToLog("clusterName : " + clusterName)
 
 	zone := getZoneForCluster(projectID, clusterName)
 	if zone == "" {
@@ -246,9 +246,9 @@ func (h *handlers) showClusterSoftwareVersionInfo(ctx context.Context, request m
 		return mcp.NewToolResultText("Need cluster name"), nil
 	}
 	projectID := h.c.GetDefaultProjectID()
-	genericCore.WriteToLog("-------------------showClusterSoftwareVersionInfo()-------------------")
-	genericCore.WriteToLog("projectId : " + projectID)
-	genericCore.WriteToLog("clusterName : " + clusterName)
+	genericcore.WriteToLog("-------------------showClusterSoftwareVersionInfo()-------------------")
+	genericcore.WriteToLog("projectId : " + projectID)
+	genericcore.WriteToLog("clusterName : " + clusterName)
 
 	zone := getZoneForCluster(projectID, clusterName)
 	if zone == "" {
@@ -267,7 +267,7 @@ func (h *handlers) showClusterSoftwareVersionInfo(ctx context.Context, request m
 	for _, node := range nodeList {
 		returnStr += "Host: " + node + "\n==========\n"
 		sshOut, _ := runSSHOnNode(node, projectID, zone, cmd)
-		genericCore.WriteToLog("showClusterSoftwareVersionInfo.3333 . sshOut: " + sshOut)
+		genericcore.WriteToLog("showClusterSoftwareVersionInfo.3333 . sshOut: " + sshOut)
 		if strings.Contains(sshOut, "ModuleNotFoundError") {
 			sshOutFiltered := filterString(sshOut, []string{
 				"Traceback",
@@ -326,7 +326,7 @@ func (h *handlers) showClusterState(ctx context.Context, request mcp.CallToolReq
 
 	sshOut, success := showClusterStateCore(projectID, zone, clusterName)
 	if !success {
-		return mcp.NewToolResultText(genericCore.GetLastLines(sshOut, 10) + "\nCould not get cluster state!"), nil
+		return mcp.NewToolResultText(genericcore.GetLastLines(sshOut, 10) + "\nCould not get cluster state!"), nil
 	}
 
 	return mcp.NewToolResultText(sshOut), nil
@@ -338,7 +338,7 @@ func showClusterStateCore(projectId string, zone string, clusterName string) (st
 }
 
 func (h *handlers) showRecentJobs(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	genericCore.WriteToLog("-------------------showRecentJobs()-------------------")
+	genericcore.WriteToLog("-------------------showRecentJobs()-------------------")
 	projectID := request.GetString("projectId", h.c.GetDefaultProjectID())
 	if projectID == "" {
 		return mcp.NewToolResultText("Could not determine gcp project. Please run: gcloud config set project \"your-project-name\" and restart cluster-director-mcp"), nil
@@ -352,14 +352,14 @@ func (h *handlers) showRecentJobs(ctx context.Context, request mcp.CallToolReque
 		return mcp.NewToolResultText("Could not get zone for cluster " + clusterName + " in project " + projectID), nil
 	}
 
-	genericCore.WriteToLog("projectId : " + projectID)
-	genericCore.WriteToLog("zone : " + zone)
-	genericCore.WriteToLog("clusterName : " + clusterName)
+	genericcore.WriteToLog("projectId : " + projectID)
+	genericcore.WriteToLog("zone : " + zone)
+	genericcore.WriteToLog("clusterName : " + clusterName)
 
 	loginNode := clusterName + "-login-001"
 	sshOut, success := runSSHOnNode(loginNode, projectID, zone, "/usr/local/bin/sacct")
 	if !success {
-		return mcp.NewToolResultText(genericCore.GetLastLines(sshOut, 10) + "\nCould not get recent jobs!"), nil
+		return mcp.NewToolResultText(genericcore.GetLastLines(sshOut, 10) + "\nCould not get recent jobs!"), nil
 	}
 
 	return mcp.NewToolResultText(sshOut), nil
@@ -370,25 +370,25 @@ func (h *handlers) showRecentJobs(ctx context.Context, request mcp.CallToolReque
 func checkAnyNodesNotInSafeToRunState(allClusterStates map[string]struct{}) bool {
 	for key := range allClusterStates {
 		keyLower := strings.ToLower(key)
-		genericCore.WriteToLog("checking key : " + keyLower)
+		genericcore.WriteToLog("checking key : " + keyLower)
 		// these are safe sates
 		if strings.Contains(keyLower, "idle") ||
 			strings.Contains(keyLower, "alloc") ||
 			strings.Contains(keyLower, "mixed") {
 
-			genericCore.WriteToLog("\t SAFE")
+			genericcore.WriteToLog("\t SAFE")
 			continue
 		}
-		genericCore.WriteToLog("\t NOT SAFE")
+		genericcore.WriteToLog("\t NOT SAFE")
 		return false
 	}
 
-	genericCore.WriteToLog("\t FINAL SAFE")
+	genericcore.WriteToLog("\t FINAL SAFE")
 	return true
 }
 
 func runNCCLOrDCGMTestsCore(h *handlers, ctx context.Context, request mcp.CallToolRequest, jobType persistence.LONG_RUNNING_OPERATION) (*mcp.CallToolResult, error) {
-	genericCore.WriteToLog("-------------------runNCCLOrDCGMTestsCore()-------------------")
+	genericcore.WriteToLog("-------------------runNCCLOrDCGMTestsCore()-------------------")
 	projectID := request.GetString("projectId", h.c.GetDefaultProjectID())
 	if projectID == "" {
 		return mcp.NewToolResultText("Could not determine gcp project. Please run: gcloud config set project \"your-project-name\" and restart cluster-director-mcp"), nil
@@ -428,37 +428,37 @@ func runNCCLOrDCGMTestsCore(h *handlers, ctx context.Context, request mcp.CallTo
 	if !success || !strings.Contains(sshOut, "SUCCESS") {
 		return mcp.NewToolResultText("Could not SSH to login node " + loginNode + "  . Is the cluster still being created? Perhaps wait a few minutes until the login node has come online?"), nil
 	} else {
-		genericCore.WriteToLog("Successfully able to SSH onto login node: " + loginNode)
+		genericcore.WriteToLog("Successfully able to SSH onto login node: " + loginNode)
 	}
 
 	// Get partitions and their states
 	var sinfoOutput string
 	sinfoOutput, success = showClusterStateCore(projectID, zone, clusterName)
 	if !success {
-		return mcp.NewToolResultText(genericCore.GetLastLines(sinfoOutput, 10) + "\nCould not run sinfo to get partitions in cluster " + clusterName + " in project " + projectID), nil
+		return mcp.NewToolResultText(genericcore.GetLastLines(sinfoOutput, 10) + "\nCould not run sinfo to get partitions in cluster " + clusterName + " in project " + projectID), nil
 	} else {
-		genericCore.WriteToLog("Successfully able to run sinfo on login node . Output of sinfo " + sinfoOutput)
+		genericcore.WriteToLog("Successfully able to run sinfo on login node . Output of sinfo " + sinfoOutput)
 	}
 
 	partitions, clusterStates, success := parseOutputofSlurmSinfoCmdAndReturnPartitions(sinfoOutput)
 	if !success {
-		genericCore.WriteToLog("Error parsing output of sinfo: " + sinfoOutput)
+		genericcore.WriteToLog("Error parsing output of sinfo: " + sinfoOutput)
 		return mcp.NewToolResultText(sinfoOutput + "\nCould not parse output of sinfo"), nil
 	} else {
-		genericCore.WriteToLog("Successfully able to parse output of sinfo ")
+		genericcore.WriteToLog("Successfully able to parse output of sinfo ")
 		for k, v := range partitions {
-			genericCore.WriteToLog("partition: " + k + " , nodelist: " + strings.Join(v, " "))
+			genericcore.WriteToLog("partition: " + k + " , nodelist: " + strings.Join(v, " "))
 		}
 		for k := range clusterStates {
-			genericCore.WriteToLog("cluster state: " + k)
+			genericcore.WriteToLog("cluster state: " + k)
 		}
 	}
 
 	if !checkAnyNodesNotInSafeToRunState(clusterStates) {
-		genericCore.WriteToLog("Some clusters did were not in idle/alloc/" + sinfoOutput)
+		genericcore.WriteToLog("Some clusters did were not in idle/alloc/" + sinfoOutput)
 		return mcp.NewToolResultText("Your cluster is not ready to run jobs yet, maybe it is still being provisioned, or you have bad nodes, or you hit a stockout?"), nil
 	} else {
-		genericCore.WriteToLog("All clusters are in safe state")
+		genericcore.WriteToLog("All clusters are in safe state")
 	}
 
 	machineTypesInCluster := GetMachineTypeForCluster(projectID, clusterName)
@@ -468,14 +468,14 @@ func runNCCLOrDCGMTestsCore(h *handlers, ctx context.Context, request mcp.CallTo
 	} else {
 		machineType, err = request.RequireString("machineType")
 		if err != nil {
-			genericCore.WriteToLog("Machine Type : " + machineType)
+			genericcore.WriteToLog("Machine Type : " + machineType)
 			return mcp.NewToolResultText("Could not determine machine type for cluster " + clusterName + " in project " + projectID), nil
 		}
 	}
 
 	if machineType != "a3-megagpu-8g" && machineType != "a3-ultragpu-8g" && machineType != "a4-highgpu-8g" {
-		genericCore.WriteToLog("Machine Type  " + machineType)
-		genericCore.WriteToLog("Machine type has to be one of a3-megagpu-8g, a3-ultragpu-8g, a4-highgpu-8g")
+		genericcore.WriteToLog("Machine Type  " + machineType)
+		genericcore.WriteToLog("Machine type has to be one of a3-megagpu-8g, a3-ultragpu-8g, a4-highgpu-8g")
 		return mcp.NewToolResultText("Machine type has to be one of a3-megagpu-8g, a3-ultragpu-8g, a4-highgpu-8g"), nil
 	}
 
@@ -488,7 +488,7 @@ func runNCCLOrDCGMTestsCore(h *handlers, ctx context.Context, request mcp.CallTo
 	} else {
 		partitionName, err = request.RequireString("partitionName")
 		if err != nil {
-			genericCore.WriteToLog("Partition Name: " + partitionName)
+			genericcore.WriteToLog("Partition Name: " + partitionName)
 			return mcp.NewToolResultText("Could not determine Slurm Partition in cluster " + clusterName + " in project " + projectID), nil
 		}
 	}
@@ -582,16 +582,16 @@ func runNCCLOrDCGMTestsCore(h *handlers, ctx context.Context, request mcp.CallTo
 	// Create remote dir on login node
 	sshOut, success = runSSHOnNode(loginNode, projectID, zone, "rm -rf "+jobObj.RunDir+"; mkdir -p "+jobObj.RunDir)
 	if !success {
-		return mcp.NewToolResultText(genericCore.GetLastLines(sshOut, 10) + "\nCould not create dir " + jobObj.RunDir + " on login node " + loginNode + " in dir "), nil
+		return mcp.NewToolResultText(genericcore.GetLastLines(sshOut, 10) + "\nCould not create dir " + jobObj.RunDir + " on login node " + loginNode + " in dir "), nil
 	}
 	sshOut, success = runSCP(projectID, zone, localScriptName, loginNode+":"+jobObj.RunScriptName)
 	if !success {
-		return mcp.NewToolResultText(genericCore.GetLastLines(sshOut, 10) + "\nCould not copy " + persistence.CDMCP_SHELL_SCRIPT_NAME + " over to login node " + loginNode + " to location " + jobObj.RunScriptName), nil
+		return mcp.NewToolResultText(genericcore.GetLastLines(sshOut, 10) + "\nCould not copy " + persistence.CDMCP_SHELL_SCRIPT_NAME + " over to login node " + loginNode + " to location " + jobObj.RunScriptName), nil
 	}
 
 	sshOut, success = runSSHOnNode(loginNode, projectID, zone, "chmod +x "+jobObj.RunScriptName)
 	if !success {
-		return mcp.NewToolResultText(genericCore.GetLastLines(sshOut, 10) + "\nCould not run \"chmod +x " + persistence.CDMCP_SHELL_SCRIPT_NAME + "\" on login node " + loginNode + " in dir " + jobObj.RunDir), nil
+		return mcp.NewToolResultText(genericcore.GetLastLines(sshOut, 10) + "\nCould not run \"chmod +x " + persistence.CDMCP_SHELL_SCRIPT_NAME + "\" on login node " + loginNode + " in dir " + jobObj.RunDir), nil
 	}
 
 	// Ignore return status
@@ -622,15 +622,15 @@ func getNCCLOrDCGMTestsStatus(projectID string, ncclOrDCGMTestJobObj *persistenc
 	mainLogFileLocalPath := LOCAL_HOST_SCRATCH_DIR + "/" + persistence.CDMCP_FULL_LOG
 
 	// Remove local copy of MAIN log
-	if genericCore.CheckFileOrDirExists(mainLogFileLocalPath, false) && !genericCore.DeleteFile(mainLogFileLocalPath) {
-		genericCore.WriteToLog(fmt.Sprintf("Could not delet local copy of main log file: %s", mainLogFileLocalPath))
+	if genericcore.CheckFileOrDirExists(mainLogFileLocalPath, false) && !genericcore.DeleteFile(mainLogFileLocalPath) {
+		genericcore.WriteToLog(fmt.Sprintf("Could not delet local copy of main log file: %s", mainLogFileLocalPath))
 		return "Could not delete logfile " + mainLogFileLocalPath + "  . Check job status later or verify status manually.", false
 	}
 
 	// Remove local copy of SUMMARY log
 	summaryLogFileLocalFullPath := LOCAL_HOST_SCRATCH_DIR + "/" + persistence.CDMCP_SUMMARY_LOG
-	if genericCore.CheckFileOrDirExists(summaryLogFileLocalFullPath, false) && !genericCore.DeleteFile(summaryLogFileLocalFullPath) {
-		genericCore.WriteToLog(fmt.Sprintf("Could not delete local copy of summary log file: %s", summaryLogFileLocalFullPath))
+	if genericcore.CheckFileOrDirExists(summaryLogFileLocalFullPath, false) && !genericcore.DeleteFile(summaryLogFileLocalFullPath) {
+		genericcore.WriteToLog(fmt.Sprintf("Could not delete local copy of summary log file: %s", summaryLogFileLocalFullPath))
 		return "Could not delete logfile " + summaryLogFileLocalFullPath + "  . Check job status later or verify status manually.", false
 	}
 
@@ -641,7 +641,7 @@ func getNCCLOrDCGMTestsStatus(projectID string, ncclOrDCGMTestJobObj *persistenc
 	if !success {
 		persistence.WriteAllJobData()
 
-		return string(genericCore.GetLastLines(sshOut, 10) + "\nNCCL/DCGM Test/Job is probably still running. I could not copy main logfile " + ncclOrDCGMTestJobObj.FullLogFilePath + " on cluster " + ncclOrDCGMTestJobObj.ClusterName + " over from login node " + ncclOrDCGMTestJobObj.LoginNodeName + "  . Check job status later or verify status manually."), false
+		return string(genericcore.GetLastLines(sshOut, 10) + "\nNCCL/DCGM Test/Job is probably still running. I could not copy main logfile " + ncclOrDCGMTestJobObj.FullLogFilePath + " on cluster " + ncclOrDCGMTestJobObj.ClusterName + " over from login node " + ncclOrDCGMTestJobObj.LoginNodeName + "  . Check job status later or verify status manually."), false
 	}
 
 	// Read MAIN log
@@ -654,7 +654,7 @@ func getNCCLOrDCGMTestsStatus(projectID string, ncclOrDCGMTestJobObj *persistenc
 	if success {
 		ncclOrDCGMTestJobObj.JobExecutionResultString, _ = slurpFile(summaryLogFileLocalFullPath)
 	} else {
-		return string(genericCore.GetLastLines(sshOut, 10) + "\nNCCL Tests are probably still running. I could not copy the summary file " + persistence.CDMCP_SUMMARY_LOG + " on cluster " + ncclOrDCGMTestJobObj.ClusterName + " over from login node " + ncclOrDCGMTestJobObj.LoginNodeName + " . Check job status later or verify status manually."), false
+		return string(genericcore.GetLastLines(sshOut, 10) + "\nNCCL Tests are probably still running. I could not copy the summary file " + persistence.CDMCP_SUMMARY_LOG + " on cluster " + ncclOrDCGMTestJobObj.ClusterName + " over from login node " + ncclOrDCGMTestJobObj.LoginNodeName + " . Check job status later or verify status manually."), false
 	}
 
 	// Process MAIN log to look for PASS/FAIL
@@ -693,13 +693,13 @@ func getNCCLOrDCGMTestsStatus(projectID string, ncclOrDCGMTestJobObj *persistenc
 			return "DCGM diagnostics passing on all nodes", true
 		}
 	} else {
-		genericCore.WriteToLog("Unsupported job type, only support NCCL or DCGM long running jobs")
+		genericcore.WriteToLog("Unsupported job type, only support NCCL or DCGM long running jobs")
 		return "Unsupported job type, only support NCCL or DCGM long running jobs", false
 	}
 
 	// We could not determine if job has finished execution and result, check for strings
 	// that indicate its running
-	if genericCore.StringMatchesAnySubstring(mainLogContents,
+	if genericcore.StringMatchesAnySubstring(mainLogContents,
 		[]string{
 			"Script Arguments",
 			"Number of Nodes", "Basic check for required arguments passed",
@@ -816,7 +816,7 @@ func getCDMcpJobIdFromFile(cdMcpScript string) (int, bool) {
 			fields := strings.Fields(line)
 			CDMcpJobId, err := strconv.Atoi(fields[1])
 			if err != nil {
-				genericCore.WriteToLog("getCDMcpJobIdFromFile Could not parse CDMcpJobId in line: " + line)
+				genericcore.WriteToLog("getCDMcpJobIdFromFile Could not parse CDMcpJobId in line: " + line)
 				return -1, false
 			}
 			return CDMcpJobId, true
@@ -826,7 +826,7 @@ func getCDMcpJobIdFromFile(cdMcpScript string) (int, bool) {
 }
 
 func checkCDMcpJobStatusCore(projectID string) (*mcp.CallToolResult, error) {
-	genericCore.WriteToLog("-------------------checkCDMcpJobStatusCore() -------------------")
+	genericcore.WriteToLog("-------------------checkCDMcpJobStatusCore() -------------------")
 
 	twoMins := time.Minute * 2
 	// Force 2-minute intervals between calls to check status
@@ -854,13 +854,13 @@ func checkCDMcpJobStatusCore(projectID string) (*mcp.CallToolResult, error) {
 func slurpFile(fileName string) (string, error) {
 	content, err := os.ReadFile(fileName)
 	if err != nil {
-		genericCore.WriteToLog("Error reading file: " + fileName)
+		genericcore.WriteToLog("Error reading file: " + fileName)
 	}
 	return string(content), err
 }
 
 func (h *handlers) runDCGMTests(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	genericCore.WriteToLog("-------------------runDCGMTests()-------------------")
+	genericcore.WriteToLog("-------------------runDCGMTests()-------------------")
 	return runNCCLOrDCGMTestsCore(h, ctx, request, persistence.DCGM_TEST)
 }
 
@@ -877,15 +877,15 @@ func (h *handlers) showJobState(ctx context.Context, request mcp.CallToolRequest
 	if zone == "" {
 		return mcp.NewToolResultText("Could not get zone for cluster " + clusterName + " in project " + projectID), nil
 	}
-	genericCore.WriteToLog("-------------------showJobState()-------------------")
-	genericCore.WriteToLog("projectId : " + projectID)
-	genericCore.WriteToLog("zone : " + zone)
-	genericCore.WriteToLog("clusterName : " + clusterName)
+	genericcore.WriteToLog("-------------------showJobState()-------------------")
+	genericcore.WriteToLog("projectId : " + projectID)
+	genericcore.WriteToLog("zone : " + zone)
+	genericcore.WriteToLog("clusterName : " + clusterName)
 
 	loginNode := clusterName + "-login-001"
 	sshOut, success := runSSHOnNode(loginNode, projectID, zone, "/usr/local/bin/squeue")
 	if !success {
-		return mcp.NewToolResultText(genericCore.GetLastLines(sshOut, 10) + "\nCould not run squeue to figure out job state on login node " + loginNode + " on cluster " + clusterName + " project " + projectID), nil
+		return mcp.NewToolResultText(genericcore.GetLastLines(sshOut, 10) + "\nCould not run squeue to figure out job state on login node " + loginNode + " on cluster " + clusterName + " project " + projectID), nil
 	}
 
 	return mcp.NewToolResultText(sshOut), nil
@@ -904,15 +904,15 @@ func (h *handlers) listPartitionInfo(ctx context.Context, request mcp.CallToolRe
 	if zone == "" {
 		return mcp.NewToolResultText("Could not get zone for cluster " + clusterName + " in project " + projectID), nil
 	}
-	genericCore.WriteToLog("-------------------listPartitionInfo()-------------------")
-	genericCore.WriteToLog("projectId : " + projectID)
-	genericCore.WriteToLog("zone : " + zone)
-	genericCore.WriteToLog("clusterName : " + clusterName)
+	genericcore.WriteToLog("-------------------listPartitionInfo()-------------------")
+	genericcore.WriteToLog("projectId : " + projectID)
+	genericcore.WriteToLog("zone : " + zone)
+	genericcore.WriteToLog("clusterName : " + clusterName)
 
 	loginNode := clusterName + "-login-001"
 	sshOut, success := runSSHOnNode(loginNode, projectID, zone, "/usr/local/bin/scontrol show partition")
 	if !success {
-		return mcp.NewToolResultText(genericCore.GetLastLines(sshOut, 10) + "\nCould not run scontrol on login node + " + loginNode + " to figure out partition information"), nil
+		return mcp.NewToolResultText(genericcore.GetLastLines(sshOut, 10) + "\nCould not run scontrol on login node + " + loginNode + " to figure out partition information"), nil
 	}
 
 	return mcp.NewToolResultText(sshOut), nil
@@ -1023,11 +1023,11 @@ func runSSHOnNode(hostName string, project string, zone string, cmd string) (str
 	output, err := sshCmd.CombinedOutput()
 	rawSSHOutput := strings.TrimSpace(string(output))
 	filteredSSHOutput := filterSSHOutput(rawSSHOutput)
-	genericCore.WriteToLog(string(filteredSSHOutput))
+	genericcore.WriteToLog(string(filteredSSHOutput))
 	if err != nil {
 		// If 'gcloud' is not installed or not in the PATH, this will fail.
 		// It can also fail if the user is not authenticated.
-		genericCore.WriteToLog(fmt.Sprintf("Error running SSH cmd: %s %v", cmd, err))
+		genericcore.WriteToLog(fmt.Sprintf("Error running SSH cmd: %s %v", cmd, err))
 		return filteredSSHOutput, false
 	}
 
@@ -1049,11 +1049,11 @@ func runSCP(project string, zone string, srcFile string, destFile string) (strin
 	output, err := finalSCPCmd.CombinedOutput()
 	scpOutput := strings.TrimSpace(string(output))
 	filteredSCPOutput := filterSSHOutput(scpOutput)
-	genericCore.WriteToLog(string(filteredSCPOutput))
+	genericcore.WriteToLog(string(filteredSCPOutput))
 	if err != nil {
 		// If 'gcloud' is not installed or not in the PATH, this will fail.
 		// It can also fail if the user is not authenticated.
-		genericCore.WriteToLog(fmt.Sprintf("Error running SCP: %v", err))
+		genericcore.WriteToLog(fmt.Sprintf("Error running SCP: %v", err))
 		return filteredSCPOutput, false
 	}
 
