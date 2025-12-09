@@ -388,7 +388,7 @@ func checkAnyNodesNotInSafeToRunState(allClusterStates map[string]struct{}) bool
 	return true
 }
 
-func runNCCLOrDCGMTestsCore(h *handlers, ctx context.Context, request mcp.CallToolRequest, jobType persistence.LONG_RUNNING_OPERATION) (*mcp.CallToolResult, error) {
+func runNCCLOrDCGMTestsCore(_ context.Context, h *handlers, request mcp.CallToolRequest, jobType persistence.LONG_RUNNING_OPERATION) (*mcp.CallToolResult, error) {
 	genericcore.WriteToLog("-------------------runNCCLOrDCGMTestsCore()-------------------")
 	projectID := request.GetString("projectId", h.c.GetDefaultProjectID())
 	if projectID == "" {
@@ -611,7 +611,7 @@ func runNCCLOrDCGMTestsCore(h *handlers, ctx context.Context, request mcp.CallTo
 }
 
 func (h *handlers) runNCCLTests(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	return runNCCLOrDCGMTestsCore(h, ctx, request, persistence.NCCL_TEST)
+	return runNCCLOrDCGMTestsCore(ctx, h, request, persistence.NCCL_TEST)
 }
 
 // Returns a boolean to report probing job status - NOT status of job
@@ -862,7 +862,7 @@ func slurpFile(fileName string) (string, error) {
 
 func (h *handlers) runDCGMTests(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	genericcore.WriteToLog("-------------------runDCGMTests()-------------------")
-	return runNCCLOrDCGMTestsCore(h, ctx, request, persistence.DCGM_TEST)
+	return runNCCLOrDCGMTestsCore(ctx, h, request, persistence.DCGM_TEST)
 }
 
 func (h *handlers) showJobState(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
