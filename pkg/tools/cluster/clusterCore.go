@@ -445,7 +445,7 @@ func GetDetailedJobInfoForAllRunningCDMcpJobsOfUserInCluster(projectId string,
 			// 5. Convert the string to an integer
 			CDMcpJobId, err := strconv.Atoi(numStr)
 			if err != nil {
-				genericCore.WriteToLog(fmt.Sprintf("Error converting matched string to integer:" + err.Error()))
+				genericCore.WriteToLog(fmt.Sprintf("Error converting matched string to integer: %v", err.Error()))
 				continue
 			}
 			genericCore.WriteToLog(fmt.Sprintf("Cluster Director MCP JobId CDMcpJobId : %d", CDMcpJobId))

@@ -222,7 +222,7 @@ func (h *handlers) checkMaintenanceEvents(ctx context.Context, request mcp.CallT
 		output, err := cmd.Output()
 		returnStr += "Maintenance info for node " + node + " : "
 		if err != nil {
-			returnStr += fmt.Sprintf("Could not get maintenance info for node %s : %w", node, err)
+			returnStr += fmt.Sprintf("Could not get maintenance info for node %s : %v", node, err)
 		} else if strings.Contains(string(output), "maintenanceStatus") {
 			scanner := bufio.NewScanner(strings.NewReader(string(output)))
 			for scanner.Scan() {
