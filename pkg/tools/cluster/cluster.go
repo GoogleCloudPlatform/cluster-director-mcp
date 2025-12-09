@@ -216,28 +216,28 @@ func (h *handlers) checkMaintenanceEvents(ctx context.Context, request mcp.CallT
 		return mcp.NewToolResultText("Could not get nodes in cluster " + clusterName + " in project " + projectID), nil
 	}
 
-	returnStr := ""
+	var returnStr strings.Builder
 	for _, node := range nodeList {
 		cmd := exec.Command("/usr/bin/gcloud", "compute", "instances", "describe", node, "--zone="+zone)
 		output, err := cmd.Output()
-		returnStr += "Maintenance info for node " + node + " : "
+		returnStr.WriteString("Maintenance info for node " + node + " : ")
 		if err != nil {
-			returnStr += fmt.Sprintf("Could not get maintenance info for node %s : %v", node, err)
+			returnStr.WriteString(fmt.Sprintf("Could not get maintenance info for node %s : %v", node, err))
 		} else if strings.Contains(string(output), "maintenanceStatus") {
 			scanner := bufio.NewScanner(strings.NewReader(string(output)))
 			for scanner.Scan() {
 				line := strings.TrimSpace(scanner.Text())
 				if line == "upcomingMaintenance:" {
 					for i := 0; i < 5 && scanner.Scan(); i++ {
-						returnStr += line
+						returnStr.WriteString(line)
 					}
 				}
 			}
 		} else {
-			returnStr += " No events \n"
+			returnStr.WriteString(" No events \n")
 		}
 	}
-	return mcp.NewToolResultText(returnStr), nil
+	return mcp.NewToolResultText(returnStr.String()), nil
 }
 
 func (h *handlers) showClusterSoftwareVersionInfo(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -260,12 +260,13 @@ func (h *handlers) showClusterSoftwareVersionInfo(ctx context.Context, request m
 		return mcp.NewToolResultText("Could not get nodes in cluster " + clusterName + " in project " + projectID), nil
 	}
 
-	returnStr := "Software versions on hosts: NVIDIA Driver and CUDA Version / Linux Distribution / Pytorch Version (if installed)\n"
-	returnStr += "Output of commands nvidia-smi / lsb_release -a / python3 -c \"import torch; print(torch.__version__)\"\n"
-	returnStr += "=================================================================================================================\n"
+	var returnStr strings.Builder
+	returnStr.WriteString("Software versions on hosts: NVIDIA Driver and CUDA Version / Linux Distribution / Pytorch Version (if installed)\n")
+	returnStr.WriteString("Output of commands nvidia-smi / lsb_release -a / python3 -c \"import torch; print(torch.__version__)\"\n")
+	returnStr.WriteString("=================================================================================================================\n")
 	cmd := "nvidia-smi 2>&1 | grep -i nvidia-smi; uname -a; python3 -c \"import torch; print(torch.__version__)\""
 	for _, node := range nodeList {
-		returnStr += "Host: " + node + "\n==========\n"
+		returnStr.WriteString("Host: " + node + "\n==========\n")
 		sshOut, _ := runSSHOnNode(node, projectID, zone, cmd)
 		genericcore.WriteToLog("showClusterSoftwareVersionInfo.3333 . sshOut: " + sshOut)
 		if strings.Contains(sshOut, "ModuleNotFoundError") {
@@ -275,13 +276,13 @@ func (h *handlers) showClusterSoftwareVersionInfo(ctx context.Context, request m
 				"ModuleNotFoundError",
 			})
 			sshOutFiltered += "\nPytorch not installed\n"
-			returnStr += sshOutFiltered
+			returnStr.WriteString(sshOutFiltered)
 		} else {
-			returnStr += sshOut + "\n"
+			returnStr.WriteString(sshOut + "\n")
 		}
-		returnStr += "\n"
+		returnStr.WriteString("\n")
 	}
-	return mcp.NewToolResultText(returnStr), nil
+	return mcp.NewToolResultText(returnStr.String()), nil
 }
 
 func getComputeNodesInCluster(loginNode string, zone string, projectId string) ([]string, bool) {
