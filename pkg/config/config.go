@@ -20,7 +20,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"cluster-director-mcp/pkg/genericCore"
+	"github.com/GoogleCloudPlatform/cluster-director-mcp/pkg/genericCore"
 )
 
 type Config struct {

@@ -20,12 +20,13 @@ package persistence
 // in ~/.cluster-director-mcp/
 //-------------------------------------------------------------------------
 import (
-	"cluster-director-mcp/pkg/genericCore"
 	"encoding/json"
 	"fmt"
 	"os"
 	"sync"
 	"time"
+
+	"github.com/GoogleCloudPlatform/cluster-director-mcp/pkg/genericCore"
 )
 
 const UNDEFINED_VAL = -1
@@ -93,8 +94,10 @@ type LongRunningJob struct {
 
 var AllLongRunningJobs []LongRunningJob
 
-var persistenceRootDir string
-var jobsFile string
+var (
+	persistenceRootDir string
+	jobsFile           string
+)
 
 // Indicates if persistence layer is ready to accept requests to write data
 var persistenceLayerReady = false
@@ -126,7 +129,6 @@ func initPersistenceLayer() bool {
 }
 
 func CreatePersistenceRootDir() bool {
-
 	persistenceRootDir, _ = os.UserHomeDir()
 	persistenceRootDir += "/.cluster-director-mcp"
 	jobsFile = persistenceRootDir + "/jobs_history.json"
@@ -135,7 +137,7 @@ func CreatePersistenceRootDir() bool {
 		return true
 	}
 
-	err := os.MkdirAll(persistenceRootDir, 0755)
+	err := os.MkdirAll(persistenceRootDir, 0o755)
 	if err != nil {
 		genericCore.WriteToLog(fmt.Sprintf("Failed to create persistence directory: %v", err))
 		return false
@@ -220,7 +222,7 @@ func WriteAllJobData() bool {
 		return false
 	}
 
-	err = os.WriteFile(jobsFile, jsonMarshalled, 0644)
+	err = os.WriteFile(jobsFile, jsonMarshalled, 0o644)
 	if err != nil {
 		genericCore.WriteToLog(fmt.Sprintf("Error writing to file: %v", err))
 	}
@@ -279,7 +281,6 @@ func readJobData() ([]LongRunningJob, bool) {
 }
 
 func GetUniqueJobID() (int, bool) {
-
 	//_, readSuccess := ReadJobData()
 	readSuccess := initPersistenceLayer()
 	if !readSuccess {
@@ -400,7 +401,7 @@ func GetMostRecentRunningOrCompletedJob(projectId string) (*LongRunningJob, bool
 // bool: Operation to probe job status was successful
 // mesg: Mesg if Operation to probe job status was NOT successful
 func GetAllLongRunningJobsInCluster(projectId string, clusterName string) ([]int, bool, string) {
-	var allRecentRunningJobIndices = []int{}
+	allRecentRunningJobIndices := []int{}
 
 	if !persistenceLayerReady {
 		success := initPersistenceLayer()
@@ -411,7 +412,7 @@ func GetAllLongRunningJobsInCluster(projectId string, clusterName string) ([]int
 	}
 
 	// Filter for cluster name
-	for i, _ := range AllLongRunningJobs {
+	for i := range AllLongRunningJobs {
 		if AllLongRunningJobs[i].ClusterName == clusterName && AllLongRunningJobs[i].JobStatus == Running {
 			allRecentRunningJobIndices = append(allRecentRunningJobIndices, i)
 		}
@@ -469,11 +470,15 @@ func GetJobIndexForCDMcpJobId(CDMcpJobId int) (int, bool) {
 	return -1, false
 }
 
-const CDMCP_REMOTE_ROOT_DIR = "~/cluster-director-mcp/"
-const CDMCP_SHELL_SCRIPT_NAME = "cluster-director-mcp_run.sh"
+const (
+	CDMCP_REMOTE_ROOT_DIR   = "~/cluster-director-mcp/"
+	CDMCP_SHELL_SCRIPT_NAME = "cluster-director-mcp_run.sh"
+)
 
-const CDMCP_FULL_LOG = "log.cluster-director-mcp_test"
-const CDMCP_SUMMARY_LOG = "cluster-director-mcp.summary.log"
+const (
+	CDMCP_FULL_LOG    = "log.cluster-director-mcp_test"
+	CDMCP_SUMMARY_LOG = "cluster-director-mcp.summary.log"
+)
 
 // Note: This function creates a new job structure but does not append it to
 // AllLongRunningJobs or write job data to disk
@@ -483,8 +488,8 @@ func GetNewJob(clusterName string,
 	jobT LONG_RUNNING_OPERATION,
 	machineType string,
 	partitionName string,
-	projectId string) (LongRunningJob, bool) {
-
+	projectId string,
+) (LongRunningJob, bool) {
 	var newJob LongRunningJob
 	var success bool
 	newJob.CDMcpJobId, success = GetUniqueJobID()

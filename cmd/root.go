@@ -19,12 +19,12 @@ import (
 	"log"
 	"os"
 
-	"cluster-director-mcp/pkg/config"
-	"cluster-director-mcp/pkg/install"
-	"cluster-director-mcp/pkg/tools"
-
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/spf13/cobra"
+
+	"github.com/GoogleCloudPlatform/cluster-director-mcp/pkg/config"
+	"github.com/GoogleCloudPlatform/cluster-director-mcp/pkg/install"
+	"github.com/GoogleCloudPlatform/cluster-director-mcp/pkg/tools"
 )
 
 const (

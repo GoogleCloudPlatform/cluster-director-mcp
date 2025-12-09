@@ -27,10 +27,10 @@ import (
 	"strings"
 	"unicode"
 
-	"cluster-director-mcp/pkg/genericCore"
-	"cluster-director-mcp/pkg/persistence"
-
 	compute "google.golang.org/api/compute/v0.alpha"
+
+	"github.com/GoogleCloudPlatform/cluster-director-mcp/pkg/genericCore"
+	"github.com/GoogleCloudPlatform/cluster-director-mcp/pkg/persistence"
 )
 
 var authToken string
@@ -46,9 +46,11 @@ type ClustersResponse struct {
 // Key to this map is the clusters region
 var MostRecentClusterData = make(map[string]*ClustersResponse)
 
-var region2ClusterNames = make(map[string][]string)
-var clusterNames2JSON = make(map[string]string)
-var clusterNames2Zone = make(map[string]string)
+var (
+	region2ClusterNames = make(map[string][]string)
+	clusterNames2JSON   = make(map[string]string)
+	clusterNames2Zone   = make(map[string]string)
+)
 
 // Cluster defines the top-level structure of the JSON object returned
 // from Cluster Director API
@@ -285,7 +287,7 @@ func getZoneForCluster(projectID string, clusterName string) string {
 func getClustersInAllRegions(projectID string) string {
 	var listOfClusters string = "["
 	genericCore.WriteToLog(fmt.Sprintf("Getting clusters in all regions for projectId : %s", projectID))
-	for region, _ := range regions2Zones {
+	for region := range regions2Zones {
 		genericCore.WriteToLog(fmt.Sprintf("Getting clusters in region : %s", region))
 		getClustersInRegionIfExists(region, projectID)
 		for _, clusterName := range region2ClusterNames[region] {
@@ -370,8 +372,8 @@ type PartitionInfo struct {
 func parseOutputofSlurmSinfoCmdAndReturnPartitions(output string) (map[string][]string, map[string]struct{}, bool) {
 	genericCore.WriteToLog("Raw output from sinfo : " + output)
 
-	var partitions = make(map[string][]string)
-	var clusterStates = make(map[string]struct{})
+	partitions := make(map[string][]string)
+	clusterStates := make(map[string]struct{})
 
 	// Split the output into lines and trim any surrounding whitespace.
 	lines := strings.Split(strings.TrimSpace(output), "\n")
@@ -409,10 +411,10 @@ func parseOutputofSlurmSinfoCmdAndReturnPartitions(output string) (map[string][]
 func GetDetailedJobInfoForAllRunningCDMcpJobsOfUserInCluster(projectId string,
 	clusterName string,
 	zone string,
-	loginNode string) (map[int]int, bool, string) {
-
+	loginNode string,
+) (map[int]int, bool, string) {
 	// Key is cluster-director-mc Job Id, value is slurm Job Id
-	var jobDataMap = make(map[int]int)
+	jobDataMap := make(map[int]int)
 
 	jobArray, errorMsg, success := GetRunningSlurmJobsForUserInCluster(projectId, clusterName, zone, loginNode)
 	if !success {
@@ -480,7 +482,7 @@ func GetRunningSlurmJobsForUserInCluster(projectId string, clusterName string, z
 		return runningJobIds, "Could not get running jobs for user " + currentUser.Username + " using: squeue -u " + currentUser.Username + " -t RUNNING", false
 	}
 
-	var isNumericRegex = regexp.MustCompile(`^\d+$`)
+	isNumericRegex := regexp.MustCompile(`^\d+$`)
 	scanner := bufio.NewScanner(strings.NewReader(sshOut))
 	for scanner.Scan() {
 		line := scanner.Text()

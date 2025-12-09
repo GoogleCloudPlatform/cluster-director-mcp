@@ -14,7 +14,7 @@
 
 package main
 
-import "cluster-director-mcp/cmd"
+import "github.com/GoogleCloudPlatform/cluster-director-mcp/cmd"
 
 func main() {
 	cmd.Execute()

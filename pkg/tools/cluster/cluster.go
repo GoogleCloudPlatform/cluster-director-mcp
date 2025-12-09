@@ -28,9 +28,9 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
-	"cluster-director-mcp/pkg/config"
-	"cluster-director-mcp/pkg/genericCore"
-	"cluster-director-mcp/pkg/persistence"
+	"github.com/GoogleCloudPlatform/cluster-director-mcp/pkg/config"
+	"github.com/GoogleCloudPlatform/cluster-director-mcp/pkg/genericCore"
+	"github.com/GoogleCloudPlatform/cluster-director-mcp/pkg/persistence"
 )
 
 type handlers struct {
@@ -160,7 +160,7 @@ func createScratchDir() bool {
 		return true
 	}
 
-	err := os.MkdirAll(LOCAL_HOST_SCRATCH_DIR, 0755)
+	err := os.MkdirAll(LOCAL_HOST_SCRATCH_DIR, 0o755)
 	if err != nil {
 		genericCore.WriteToLog(fmt.Sprintf("Failed to create scrarch directory: %s %v", LOCAL_HOST_SCRATCH_DIR, err))
 		return false
@@ -269,9 +269,11 @@ func (h *handlers) showClusterSoftwareVersionInfo(ctx context.Context, request m
 		sshOut, _ := runSSHOnNode(node, projectID, zone, cmd)
 		genericCore.WriteToLog("showClusterSoftwareVersionInfo.3333 . sshOut: " + sshOut)
 		if strings.Contains(sshOut, "ModuleNotFoundError") {
-			sshOutFiltered := filterString(sshOut, []string{"Traceback",
+			sshOutFiltered := filterString(sshOut, []string{
+				"Traceback",
 				", line 1, in <module>",
-				"ModuleNotFoundError"})
+				"ModuleNotFoundError",
+			})
 			sshOutFiltered += "\nPytorch not installed\n"
 			returnStr += sshOutFiltered
 		} else {
@@ -511,7 +513,7 @@ func runNCCLOrDCGMTestsCore(h *handlers, ctx context.Context, request mcp.CallTo
 	// - 7 (owner): read, write, execute
 	// - 5 (group): read, execute
 	// - 5 (others): read, execute
-	permissions := os.FileMode(0755)
+	permissions := os.FileMode(0o755)
 
 	// Create new long running job object, note persistence.NCCL_test must be overwritten with the correct value
 	jobObj, _ := persistence.GetNewJob(clusterName,
@@ -538,9 +540,11 @@ func runNCCLOrDCGMTestsCore(h *handlers, ctx context.Context, request mcp.CallTo
 			nodeListName,
 			partitionName)
 
-		summaryGenerationLines = []string{"sed -n -e \"/HOST_VARS/,/NCCL version/p\" results/*.log >> ../cluster-director-mcp.summary.log",
+		summaryGenerationLines = []string{
+			"sed -n -e \"/HOST_VARS/,/NCCL version/p\" results/*.log >> ../cluster-director-mcp.summary.log",
 			"sed -n -e \"/#[[:space:]]\\+size[[:space:]]\\+count/,/# Avg bus bandwidth/p\" results/*.log >> ../cluster-director-mcp.summary.log",
-			"sed -n \"/Performing nccl check/,/NCCL test passing on all nodes/p\" ../../log.cluster-director-mcp_test >> ../cluster-director-mcp.summary.log"}
+			"sed -n \"/Performing nccl check/,/NCCL test passing on all nodes/p\" ../../log.cluster-director-mcp_test >> ../cluster-director-mcp.summary.log",
+		}
 	} else {
 		clusterDiagCmd = fmt.Sprintf(
 			"python3 cli/cluster_diag.py -o slurm healthscan %s --check gpu --nodes %s --partition %s",
@@ -613,7 +617,6 @@ func (h *handlers) runNCCLTests(ctx context.Context, request mcp.CallToolRequest
 // A value of true means, job status could be determined, false means
 // it could not determine the status of the job s
 func getNCCLOrDCGMTestsStatus(projectID string, ncclOrDCGMTestJobObj *persistence.LongRunningJob) (string, bool) {
-
 	ncclOrDCGMTestJobObj.LastStatusCheckTime = time.Now()
 
 	mainLogFileLocalPath := LOCAL_HOST_SCRATCH_DIR + "/" + persistence.CDMCP_FULL_LOG
@@ -697,8 +700,10 @@ func getNCCLOrDCGMTestsStatus(projectID string, ncclOrDCGMTestJobObj *persistenc
 	// We could not determine if job has finished execution and result, check for strings
 	// that indicate its running
 	if genericCore.StringMatchesAnySubstring(mainLogContents,
-		[]string{"Script Arguments",
-			"Number of Nodes", "Basic check for required arguments passed"}) {
+		[]string{
+			"Script Arguments",
+			"Number of Nodes", "Basic check for required arguments passed",
+		}) {
 
 		ncclOrDCGMTestJobObj.JobStatus = persistence.Running
 		ncclOrDCGMTestJobObj.JobExecutionResult = persistence.JOB_EXEC_RESULT_DONT_KNOW
@@ -995,10 +1000,12 @@ func filterString(rawSSHOut string, substringsToRemove []string) string {
 }
 
 func filterSSHOutput(rawSSHOut string) string {
-	return filterString(rawSSHOut, []string{"Existing host keys found",
+	return filterString(rawSSHOut, []string{
+		"Existing host keys found",
 		"To increase the performance",
 		"please see https:",
-		"WARNING:"})
+		"WARNING:",
+	})
 }
 
 func runSSHOnNode(hostName string, project string, zone string, cmd string) (string, bool) {

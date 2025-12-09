@@ -1,4 +1,4 @@
-module cluster-director-mcp
+module github.com/GoogleCloudPlatform/cluster-director-mcp
 
 go 1.24.0
 

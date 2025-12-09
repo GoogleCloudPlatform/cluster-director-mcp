@@ -15,10 +15,10 @@
 package tools
 
 import (
-	"cluster-director-mcp/pkg/config"
-	"cluster-director-mcp/pkg/tools/cluster"
-
 	"github.com/mark3labs/mcp-go/server"
+
+	"github.com/GoogleCloudPlatform/cluster-director-mcp/pkg/config"
+	"github.com/GoogleCloudPlatform/cluster-director-mcp/pkg/tools/cluster"
 )
 
 func Install(s *server.MCPServer, c *config.Config) {
