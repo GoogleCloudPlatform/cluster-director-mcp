@@ -18,9 +18,10 @@ import (
 	"cluster-director-mcp/pkg/config"
 	"cluster-director-mcp/pkg/tools/cluster"
 
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-func Install(s *server.MCPServer, c *config.Config) {
+func Install(s *mcp.Server, c *config.Config) {
 	cluster.Install(s, c)
 }
+

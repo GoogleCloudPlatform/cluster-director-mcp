@@ -282,8 +282,9 @@ func getZoneForCluster(projectID string, clusterName string) string {
 	}
 }
 
-func getClustersInAllRegions(projectID string) string {
+func getClustersInAllRegions(projectID string) (string, int) {
 	var listOfClusters string = "["
+	countClusters := 0
 	genericCore.WriteToLog(fmt.Sprintf("Getting clusters in all regions for projectId : %s", projectID))
 	for region, _ := range regions2Zones {
 		genericCore.WriteToLog(fmt.Sprintf("Getting clusters in region : %s", region))
@@ -291,13 +292,16 @@ func getClustersInAllRegions(projectID string) string {
 		for _, clusterName := range region2ClusterNames[region] {
 			genericCore.WriteToLog(fmt.Sprintf("Found cluster : %s", clusterName))
 			listOfClusters += string("\"" + clusterName + "\", ")
+			countClusters++
 		}
 	}
 	listOfClusters = strings.TrimSuffix(listOfClusters, ", ")
 	listOfClusters += "]"
+
+	genericCore.WriteToLog(fmt.Sprintf("Count of clusters found: %d", countClusters))
 	genericCore.WriteToLog(fmt.Sprintf("Final list of clusters in all regions in project %s : %s ", projectID, listOfClusters))
 
-	return listOfClusters
+	return listOfClusters, countClusters
 }
 
 func getClustersInRegionIfExists(region string, projectID string) {
@@ -505,7 +509,7 @@ func GetRunningSlurmJobsForUserInCluster(projectId string, clusterName string, z
 }
 
 func GetMachineTypeForCluster(projectId string, clusterName string) []string {
-	getClustersInAllRegions(projectId)
+	_, _ = getClustersInAllRegions(projectId)
 
 	var machineTypes []string
 
