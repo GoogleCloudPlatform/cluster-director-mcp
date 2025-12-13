@@ -67,8 +67,8 @@ func init() {
 }
 
 func runRootCmd(cmd *cobra.Command, args []string) {
-startMCPServer(cmd.Context())
-}	
+	startMCPServer(cmd.Context())
+}
 
 func startMCPServer(ctx context.Context) {
 	c := config.New(version)
@@ -82,7 +82,6 @@ func startMCPServer(ctx context.Context) {
 
 	log.Printf("Starting Cluster Director MCP Server")
 	tr := &mcp.LoggingTransport{Transport: &mcp.StdioTransport{}, Writer: log.Writer()}
-	
 
 	if err := s.Run(ctx, tr); err != nil {
 		log.Printf("Server error: %v\n", err)
