@@ -18,38 +18,37 @@ import (
 	"bufio"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 )
 
 const maxLogFiles = 100
 
 var logFile *os.File
+var writeLogMutex sync.Mutex // The lock for mutual exclusion
+
+func CreateLogFile() {
+	logFile = CreateUniqueFilePath("logs/log.cluster-director-mcp")
+	if logFile == nil {
+		logFile = os.Stdout
+	}
+}
 
 func WriteToLog(message string) {
-	msg := ""
-
-	if logFile == nil {
-		logFile = CreateUniqueFilePath("logs/log.cluster-director-mcp")
-	}
+	writeLogMutex.Lock()
+	defer writeLogMutex.Unlock()
 
 	// Compute caller's package, file and line number
 	_, file, line, ok := runtime.Caller(1)
 	if !ok {
-		fmt.Println(message)
-		msg = fmt.Sprintf("<UNKNOWN> : %s\n", message)
+		logFile.WriteString(fmt.Sprintf("<UNKNOWN> : %s\n", message))
 	} else {
-		msg = fmt.Sprintf("%s:%d: %s\n", file, line, message)
-	}
-	if logFile != nil {
-		_, _ = logFile.WriteString(msg)
-	} else {
-		log.Println(msg)
+		logFile.WriteString(fmt.Sprintf("%s:%d: %s\n", file, line, message))
 	}
 }
 

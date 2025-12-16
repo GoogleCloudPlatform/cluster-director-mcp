@@ -21,8 +21,11 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -150,6 +153,8 @@ func Install(s *server.MCPServer, c *config.Config) {
 		mcp.WithString("clusterName", mcp.Required(), mcp.Description("Cluster name. Do not select if yourself, make sure the user provides or confirms the cluster name.")),
 	)
 	s.AddTool(showClusterSoftwareVersionInfo, h.showClusterSoftwareVersionInfo)
+
+	genericCore.CreateLogFile()
 }
 
 // Place on local host to store files
@@ -240,6 +245,15 @@ func (h *handlers) checkMaintenanceEvents(ctx context.Context, request mcp.CallT
 	return mcp.NewToolResultText(returnStr), nil
 }
 
+// Check node state before SSH'ing into the node
+// TBD: Run checkAnyNodesNotInSafeToRunState and filter nodes that are in a safe state to SSH
+// i.e not in idle, alloc..etc
+// As shown below, some nodes in the same partition can be in different states
+// ~$ sinfo
+// PARTITION AVAIL  TIMELIMIT  NODES  STATE NODELIST
+// part1*       up   infinite     59  down# xxxx-nodeset1-[0-35,37-39,41-45,47-50,52-59,61-63]
+// part1*       up   infinite      5   idle xxxx-nodeset1-[36,40,46,51,60]
+
 func (h *handlers) showClusterSoftwareVersionInfo(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	clusterName, err := request.RequireString("clusterName")
 	if err != nil {
@@ -263,23 +277,184 @@ func (h *handlers) showClusterSoftwareVersionInfo(ctx context.Context, request m
 	returnStr := "Software versions on hosts: NVIDIA Driver and CUDA Version / Linux Distribution / Pytorch Version (if installed)\n"
 	returnStr += "Output of commands nvidia-smi / lsb_release -a / python3 -c \"import torch; print(torch.__version__)\"\n"
 	returnStr += "=================================================================================================================\n"
-	cmd := "nvidia-smi 2>&1 | grep -i nvidia-smi; uname -a; python3 -c \"import torch; print(torch.__version__)\""
-	for _, node := range nodeList {
-		returnStr += "Host: " + node + "\n==========\n"
-		sshOut, _ := runSSHOnNode(node, projectID, zone, cmd)
-		genericCore.WriteToLog("showClusterSoftwareVersionInfo.3333 . sshOut: " + sshOut)
-		if strings.Contains(sshOut, "ModuleNotFoundError") {
-			sshOutFiltered := filterString(sshOut, []string{"Traceback",
-				", line 1, in <module>",
-				"ModuleNotFoundError"})
-			sshOutFiltered += "\nPytorch not installed\n"
-			returnStr += sshOutFiltered
-		} else {
-			returnStr += sshOut + "\n"
-		}
-		returnStr += "\n"
+	cmd := "nvidia-smi 2>&1 | grep -i nvidia-smi; python3 -c \"import torch; print(torch.__version__)\""
+
+	resultChannels := make([]chan string, len(nodeList))
+	resultStrings := make([]string, len(nodeList))
+
+	var wg sync.WaitGroup
+	for i, node := range nodeList {
+		wg.Add(1)
+		genericCore.WriteToLog(fmt.Sprintf("showClusterSoftwareVersionInfo: spawning thread for node "+node+" i : %d", i))
+		go runSSHAndGetSoftwareVersions(node, projectID, zone, cmd, &resultStrings[i], &wg)
+		genericCore.WriteToLog(fmt.Sprintf("showClusterSoftwareVersionInfo: Done spawning thread for node "+node+" i : %d", i))
 	}
-	return mcp.NewToolResultText(returnStr), nil
+
+	genericCore.WriteToLog("showClusterSoftwareVersionInfo: Reaping results.0000")
+	wg.Wait()
+	genericCore.WriteToLog("showClusterSoftwareVersionInfo: Reaping results.1111")
+
+	var result string
+	swBuckets := make(map[string][]string)
+	for i, _ := range resultChannels {
+		genericCore.WriteToLog(fmt.Sprintf("showClusterSoftwareVersionInfo: i : %d", i))
+
+		// Block and wait for the result from the i-th channel
+		//result = <-resultChannels[i]
+
+		genericCore.WriteToLog("showClusterSoftwareVersionInfo: Received " + result + " from node " + nodeList[i])
+
+		//close(resultChannels[i])
+		nodesInBucket, found := swBuckets[resultStrings[i]]
+		if found {
+			nodesInBucket = append(nodesInBucket, nodeList[i])
+			swBuckets[resultStrings[i]] = nodesInBucket
+		} else {
+			swBuckets[resultStrings[i]] = []string{nodeList[i]}
+		}
+		returnStr += resultStrings[i]
+	}
+
+	genericCore.WriteToLog("showClusterSoftwareVersionInfo: Final SSH result: " + returnStr)
+
+	bucketedResults := aggregateResults(swBuckets)
+	returnString := ""
+	for bucket, result := range bucketedResults {
+		returnString = result + "\n================================================================\n" + bucket + "\n\n"
+	}
+
+	genericCore.WriteToLog("showClusterSoftwareVersionInfo: Aggregated results: " + returnString)
+
+	return mcp.NewToolResultText(returnString), nil
+}
+
+// To be completed later
+// This function buckets
+func aggregateResults(buckets map[string][]string) map[string]string {
+	var bucketedResults = make(map[string]string)
+	trailingIntegersRegexp := regexp.MustCompile(`(\d+)$`)
+	var firstElement int
+	var lastElement int
+	var nodeNamePrefix string
+	genericCore.WriteToLog("aggregateResults.0000")
+	for bucket, nodeList := range buckets {
+		genericCore.WriteToLog("\n====\naggregateResults.1111.AAAA . Processing bucket: " + bucket)
+		genericCore.WriteToLog("aggregateResults.1111.BBBB . Processing nodeList: " + strings.Join(nodeList, ","))
+		genericCore.WriteToLog("================================")
+		var bucketableNodes []int
+
+		bucketCanBeCollapsed := true
+		nodeNamePrefixRegexp := regexp.MustCompile(`(.*?)\d+$`)
+		matches := nodeNamePrefixRegexp.FindStringSubmatch(nodeList[0])
+
+		genericCore.WriteToLog("aggregateResults.2222")
+		// A successful match will have 3 elements (full match + two capture groups).
+		if len(matches) < 2 {
+			genericCore.WriteToLog("aggregateResults.3333")
+			bucketCanBeCollapsed = false
+			goto DONE_LOOKING_FOR_BUCKETS
+		}
+
+		genericCore.WriteToLog("aggregateResults.4444 . matches : " + strings.Join(matches, ","))
+
+		// matches[1] is the content of the first capturing group: the prefix
+		nodeNamePrefix = matches[1]
+
+		genericCore.WriteToLog("aggregateResults.5555")
+
+		// Try to collapse this bucket
+		for _, nodeName := range nodeList {
+			genericCore.WriteToLog("aggregateResults.6666")
+			nodeNumberMatches := trailingIntegersRegexp.FindStringSubmatch(nodeName)
+			if len(nodeNumberMatches) < 2 {
+				genericCore.WriteToLog("aggregateResults.7777" + strings.Join(nodeNumberMatches, ","))
+				bucketCanBeCollapsed = false
+				goto DONE_LOOKING_FOR_BUCKETS
+			} else {
+				genericCore.WriteToLog("aggregateResults.8888")
+				num, err := strconv.Atoi(nodeNumberMatches[1])
+				genericCore.WriteToLog("aggregateResults.9999")
+				if err != nil {
+					genericCore.WriteToLog("aggregateResults.AAAA")
+					bucketCanBeCollapsed = false
+					goto DONE_LOOKING_FOR_BUCKETS
+				} else {
+					genericCore.WriteToLog("aggregateResults.BBBB")
+					bucketableNodes = append(bucketableNodes, num)
+				}
+			}
+		}
+
+		genericCore.WriteToLog("aggregateResults.CCCC")
+
+		// if we are here, all nodes can be bucketed
+
+		// sort to get node numbers of first and last node
+		sort.Ints(bucketableNodes)
+		firstElement = bucketableNodes[0]
+		lastElement = bucketableNodes[len(bucketableNodes)-1]
+
+		// This bucket can be "collapsed" as follows:
+		// "nodes node1 through node10"
+
+	DONE_LOOKING_FOR_BUCKETS:
+		genericCore.WriteToLog("aggregateResults.DDDD")
+		finalNodeString := "Nodes "
+		if bucketCanBeCollapsed {
+			genericCore.WriteToLog("aggregateResults.EEEE")
+			finalNodeString += nodeNamePrefix + strconv.Itoa(firstElement) + " through " +
+				nodeNamePrefix + strconv.Itoa(lastElement)
+		} else {
+			genericCore.WriteToLog("aggregateResults.FFFF")
+			finalNodeString = strings.Join(nodeList, ",")
+		}
+
+		genericCore.WriteToLog("aggregateResults.GGGG")
+
+		finalNodeString += " (" + strconv.Itoa(len(nodeList)) + " nodes)"
+
+		bucketedResults[bucket] = finalNodeString
+	}
+
+	return bucketedResults
+}
+
+// var writeLogMutex sync.Mutex // The lock for mutual exclusion
+// func runSSHAndGetSoftwareVersions(node string, projectID string, zone string, cmd string, resultChannel chan<- string) {
+func runSSHAndGetSoftwareVersions(node string, projectID string, zone string, cmd string, retStr *string, wg *sync.WaitGroup) {
+	defer wg.Done()
+	//returnStr := "Host: " + node + "\n==========\n"
+	returnStr := ""
+	sshOut, _ := runSSHOnNode(node, projectID, zone, cmd)
+	genericCore.WriteToLog("showClusterSoftwareVersionInfo.0000: node: " + node + " . sshOut: " + sshOut)
+	if strings.Contains(sshOut, "ModuleNotFoundError") {
+		genericCore.WriteToLog("showClusterSoftwareVersionInfo.1111: node: " + node)
+		sshOutFiltered := filterString(sshOut, []string{"Traceback",
+			", line 1, in <module>",
+			"ModuleNotFoundError"})
+		genericCore.WriteToLog("showClusterSoftwareVersionInfo.2222: node: " + node)
+		sshOutFiltered += "\nPytorch not installed\n"
+		genericCore.WriteToLog("showClusterSoftwareVersionInfo.3333: node: " + node)
+		returnStr += sshOutFiltered
+		genericCore.WriteToLog("showClusterSoftwareVersionInfo.4444: node: " + node)
+	} else {
+		genericCore.WriteToLog("showClusterSoftwareVersionInfo.5555: node: " + node)
+		returnStr += sshOut + "\n"
+		genericCore.WriteToLog("showClusterSoftwareVersionInfo.6666: node: " + node)
+	}
+	genericCore.WriteToLog("showClusterSoftwareVersionInfo.7777: node: " + node)
+	returnStr += "\n"
+	genericCore.WriteToLog("showClusterSoftwareVersionInfo.8888: node: " + node)
+
+	// begin critical section
+	//resultChannel <- returnStr
+	//writeLogMutex.Lock()
+	//defer writeLogMutex.Unlock()
+
+	*retStr = returnStr
+	// end critical section
+
+	genericCore.WriteToLog("showClusterSoftwareVersionInfo.9999: Returning from thread for node: " + node + " . sshOut: " + sshOut)
 }
 
 func getComputeNodesInCluster(loginNode string, zone string, projectId string) ([]string, bool) {
@@ -997,6 +1172,16 @@ func filterString(rawSSHOut string, substringsToRemove []string) string {
 func filterSSHOutput(rawSSHOut string) string {
 	return filterString(rawSSHOut, []string{"Existing host keys found",
 		"To increase the performance",
+		"This tool needs to create",
+		"Do you want to continue",
+		"Generating public/private",
+		"Your identification has been saved in",
+		"Your public key has been saved in",
+		"The key fingerprint is",
+		"SHA256:",
+		"The key's randomart image is",
+		"keys to /home",
+		"+---",
 		"please see https:",
 		"WARNING:"})
 }
@@ -1016,7 +1201,7 @@ func runSSHOnNode(hostName string, project string, zone string, cmd string) (str
 	output, err := sshCmd.CombinedOutput()
 	rawSSHOutput := strings.TrimSpace(string(output))
 	filteredSSHOutput := filterSSHOutput(rawSSHOutput)
-	genericCore.WriteToLog(string(filteredSSHOutput))
+	genericCore.WriteToLog("\n\nSSH Output\n====\n" + string(filteredSSHOutput) + "\n====================\n\n")
 	if err != nil {
 		// If 'gcloud' is not installed or not in the PATH, this will fail.
 		// It can also fail if the user is not authenticated.
