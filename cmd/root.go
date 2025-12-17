@@ -15,6 +15,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -23,7 +24,8 @@ import (
 	"cluster-director-mcp/pkg/install"
 	"cluster-director-mcp/pkg/tools"
 
-	"github.com/mark3labs/mcp-go/server"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+
 	"github.com/spf13/cobra"
 )
 
@@ -52,7 +54,6 @@ var (
 )
 
 // Execute adds all child commands to the root command and sets flags appropriately.
-// This is called by main.main(). It only needs to happen once to the rootCmd.
 func Execute() {
 	err := rootCmd.Execute()
 	if err != nil {
@@ -66,21 +67,23 @@ func init() {
 }
 
 func runRootCmd(cmd *cobra.Command, args []string) {
-	startMCPServer()
+	startMCPServer(cmd.Context())
 }
 
-func startMCPServer() {
-	s := server.NewMCPServer(
-		"Cluster Director Server",
-		version,
-		server.WithToolCapabilities(true),
-	)
-
+func startMCPServer(ctx context.Context) {
 	c := config.New(version)
+	impl := &mcp.Implementation{
+		Name:    "Cluster Director MCP Server",
+		Version: version,
+	}
+	s := mcp.NewServer(impl, &mcp.ServerOptions{})
+
 	tools.Install(s, c)
 
 	log.Printf("Starting Cluster Director MCP Server")
-	if err := server.ServeStdio(s); err != nil {
+	tr := &mcp.LoggingTransport{Transport: &mcp.StdioTransport{}, Writer: log.Writer()}
+
+	if err := s.Run(ctx, tr); err != nil {
 		log.Printf("Server error: %v\n", err)
 	}
 }
@@ -101,3 +104,6 @@ func runInstallGeminiCLICmd(cmd *cobra.Command, args []string) {
 	}
 	fmt.Println("Successfully installed Cluster Director MCP server as a gemini-cli extension.")
 }
+
+
+
