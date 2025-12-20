@@ -624,7 +624,7 @@ func (h *handlers) showClusterSoftwareVersionInfo(ctx context.Context, request *
 
 func getComputeNodesInCluster(loginNode string, zone string, projectId string) ([]string, bool) {
 	var returnArr []string
-	sshOut, success := runSSHOnNode(loginNode, projectId, zone, "/usr/local/bin/sinfo -N -l")
+	sshOut, success := runSSHOnNode(loginNode, projectId, zone, "sinfo -N -l")
 	if !success {
 		return returnArr, success
 	}
@@ -665,7 +665,7 @@ func (h *handlers) showClusterState(ctx context.Context, request *ShowClusterSta
 }
 
 func showClusterStateCore(projectId string, zone string, clusterName string) (string, bool) {
-	sshOut, success := runSSHOnNode(clusterName+"-login-001", projectId, zone, "/usr/local/bin/sinfo")
+	sshOut, success := runSSHOnNode(clusterName+"-login-001", projectId, zone, "sinfo")
 	return sshOut, success
 }
 
@@ -688,7 +688,7 @@ func (h *handlers) showRecentJobs(ctx context.Context, request *ShowRecentJobsRe
 	genericCore.WriteToLog("clusterName : " + clusterName)
 
 	loginNode := clusterName + "-login-001"
-	sshOut, success := runSSHOnNode(loginNode, projectID, zone, "/usr/local/bin/sacct")
+	sshOut, success := runSSHOnNode(loginNode, projectID, zone, "sacct")
 	if !success {
 		return genericCore.GetLastLines(sshOut, 10) + "\nCould not get recent jobs!", nil
 	}
@@ -1225,7 +1225,7 @@ func (h *handlers) showJobState(ctx context.Context, request *ShowJobStateReques
 	genericCore.WriteToLog("clusterName : " + clusterName)
 
 	loginNode := clusterName + "-login-001"
-	sshOut, success := runSSHOnNode(loginNode, projectID, zone, "/usr/local/bin/squeue")
+	sshOut, success := runSSHOnNode(loginNode, projectID, zone, "squeue")
 	if !success {
 		return genericCore.GetLastLines(sshOut, 10) + "\nCould not run squeue to figure out job state on login node " + loginNode + " on cluster " + clusterName + " project " + projectID, nil
 	}
@@ -1255,7 +1255,7 @@ func (h *handlers) listPartitionInfo(ctx context.Context, request *ListPartition
 	genericCore.WriteToLog("clusterName : " + clusterName)
 
 	loginNode := clusterName + "-login-001"
-	sshOut, success := runSSHOnNode(loginNode, projectID, zone, "/usr/local/bin/scontrol show partition")
+	sshOut, success := runSSHOnNode(loginNode, projectID, zone, "scontrol show partition")
 	if !success {
 		return genericCore.GetLastLines(sshOut, 10) + "\nCould not run scontrol on login node " + loginNode + " to figure out partition information", nil
 	}
