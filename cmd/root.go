@@ -1,3 +1,4 @@
+
 // Copyright 2025 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -104,6 +105,3 @@ func runInstallGeminiCLICmd(cmd *cobra.Command, args []string) {
 	}
 	fmt.Println("Successfully installed Cluster Director MCP server as a gemini-cli extension.")
 }
-
-
-
