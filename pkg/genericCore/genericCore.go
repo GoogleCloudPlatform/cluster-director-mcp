@@ -18,39 +18,43 @@ import (
 	"bufio"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
 )
 
 const maxLogFiles = 100
 
-var logFile *os.File
+var logger *slog.Logger
 
 func WriteToLog(message string) {
-	msg := ""
 
-	if logFile == nil {
-		logFile = CreateUniqueFilePath("logs/log.cluster-director-mcp")
+	if logger == nil {
+		f := CreateUniqueFilePath("logs/log.cluster-director-mcp")
+
+		// Configure handler options
+		opts := &slog.HandlerOptions{
+			AddSource: true,           // Include file and line number
+			Level:     slog.LevelInfo, // Default level
+		}
+
+		// If file creation succeeded, write to file. Otherwise, write to stdout.
+		if f != nil {
+			logger = slog.New(slog.NewTextHandler(f, opts))
+		} else {
+			logger = slog.New(slog.NewTextHandler(os.Stdout, opts))
+		}
+
+		// Set this as the default logger for the application
+		slog.SetDefault(logger)
 	}
 
-	// Compute caller's package, file and line number
-	_, file, line, ok := runtime.Caller(1)
-	if !ok {
-		fmt.Println(message)
-		msg = fmt.Sprintf("<UNKNOWN> : %s\n", message)
-	} else {
-		msg = fmt.Sprintf("%s:%d: %s\n", file, line, message)
-	}
-	if logFile != nil {
-		_, _ = logFile.WriteString(msg)
-	} else {
-		log.Println(msg)
-	}
+	// Log the message.
+	// slog automatically adds "time", "level", and "source" attributes.
+	logger.Info(message)
 }
 
 // getLastLines scans the string and keeps a rolling slice of the last n lines.
