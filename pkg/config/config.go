@@ -20,7 +20,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"cluster-director-mcp/pkg/genericCore"
+	"github.com/GoogleCloudPlatform/cluster-director-mcp/pkg/genericcore"
 )
 
 type Config struct {
@@ -68,11 +68,11 @@ func New(version string) *Config {
 func getDefaultProjectID() string {
 	out, err := exec.Command("gcloud", "config", "get", "core/project").Output()
 	if err != nil {
-		genericCore.WriteToLog(fmt.Sprintf("Failed to get default project: %v", err))
+		genericcore.WriteToLog(fmt.Sprintf("Failed to get default project: %v", err))
 		return ""
 	}
 	projectID := strings.TrimSpace(string(out))
 	log.Printf("Using default project ID: %s", projectID)
-	genericCore.WriteToLog(fmt.Sprintf("Using default project ID: %s", projectID))
+	genericcore.WriteToLog(fmt.Sprintf("Using default project ID: %s", projectID))
 	return projectID
 }

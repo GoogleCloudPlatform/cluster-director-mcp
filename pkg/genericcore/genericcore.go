@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package genericCore
+package genericcore
 
 import (
 	"bufio"
@@ -23,6 +23,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 )
@@ -118,7 +119,7 @@ func CheckFileOrDirExists(path string, checkIfItsDir bool) bool {
 }
 
 func getUniqueLogFileName(logNameRoot string) string {
-	for i := 0; i < maxLogFiles; i++ {
+	for i := range maxLogFiles {
 		_, err := os.Stat(fmt.Sprintf("%s.%d", logNameRoot, i))
 		if err != nil && !os.IsNotExist(err) {
 			return fmt.Sprintf("%s.%d", logNameRoot, i)
@@ -130,8 +131,8 @@ func getUniqueLogFileName(logNameRoot string) string {
 
 func CreateUniqueFilePath(logNameRoot string) *os.File {
 	// Make the directory if it does not exist, fail silently
-	_ = os.MkdirAll(filepath.Dir(logNameRoot), 0755)
-	logFile, err := os.OpenFile(getUniqueLogFileName(logNameRoot), os.O_CREATE|os.O_WRONLY, 0666)
+	_ = os.MkdirAll(filepath.Dir(logNameRoot), 0o755)
+	logFile, err := os.OpenFile(getUniqueLogFileName(logNameRoot), os.O_CREATE|os.O_WRONLY, 0o666)
 	if err != nil {
 		// If we can't open the log file, it's a fatal error, so we exit.
 		return nil
@@ -193,10 +194,5 @@ func StringMatchesAnySubstring(s string, substrings []string) bool {
 
 // contains checks if an integer is present in a slice.
 func IntArrContains(s []int, e int) bool {
-	for _, a := range s {
-		if a == e {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(s, e)
 }

@@ -28,13 +28,13 @@ func GeminiCLIExtension(baseDir, version, exePath string) error {
 	}
 
 	// Create the manifest file as described in https://github.com/google-gemini/gemini-cli/blob/main/docs/extension.md.
-	manifest := map[string]interface{}{
+	manifest := map[string]any{
 		"name":            "cluster-director-mcp",
 		"version":         version,
 		"description":     "Agentic AI-Assistant to use, manage and monitor Clusters created using Cluster Director.",
 		"contextFileName": baseDir + "/.gemini/extensions/cluster-director-mcp/GEMINI.md",
-		"mcpServers": map[string]interface{}{
-			"cluster-director-mcp": map[string]interface{}{
+		"mcpServers": map[string]any{
+			"cluster-director-mcp": map[string]any{
 				"command": exePath,
 			},
 		},
