@@ -22,7 +22,7 @@ export CLUSTER_DIRECTOR_MCP_DEBUG=1
 # Update cluster-director-mcp if necessary
 echo "----"
 echo "Updating cluster-director-mcp..."
-(git pull 2>&1 > /dev/null ; make -j  2>&1 > /dev/null) &
+(git fetch --all; git checkout develop 2>&1 > /dev/null ; make -j  2>&1 > /dev/null) &
 git_pull_make_pid=$!
 
 # Clean scratch
