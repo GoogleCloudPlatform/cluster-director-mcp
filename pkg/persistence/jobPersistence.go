@@ -61,6 +61,7 @@ type LONG_RUNNING_OPERATION int
 const (
 	NCCL_TEST LONG_RUNNING_OPERATION = iota // 0
 	DCGM_TEST                               // 1
+	VERSION_CHECK						   // 2	
 )
 
 type LongRunningJob struct {
@@ -181,6 +182,8 @@ func GetJobTypeString(ii int) string {
 		return " NCCL test "
 	} else if AllLongRunningJobs[ii].JobType == DCGM_TEST {
 		return " DCGM test "
+	} else if AllLongRunningJobs[ii].JobType == VERSION_CHECK {
+		return " Version Check "
 	} else {
 		return " Unknown Job Type "
 	}
