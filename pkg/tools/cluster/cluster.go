@@ -583,6 +583,15 @@ func (h *handlers) checkMaintenanceEvents(ctx context.Context, request *Maintena
 	return returnStr, nil
 }
 
+// Check node state before SSH'ing into the node
+// TBD: Run checkAnyNodesNotInSafeToRunState and filter nodes that are in a safe state to SSH
+// i.e not in idle, alloc..etc
+// As shown below, some nodes in the same partition can be in different states
+// ~$ sinfo
+// PARTITION AVAIL  TIMELIMIT  NODES  STATE NODELIST
+// part1*       up   infinite     59  down# xxxx-nodeset1-[0-35,37-39,41-45,47-50,52-59,61-63]
+// part1*       up   infinite      5   idle xxxx-nodeset1-[36,40,46,51,60]
+
 func (h *handlers) showClusterSoftwareVersionInfo(ctx context.Context, request *SoftwareVersionInfoRequest) (string, error) {
 	genericCore.WriteToLog("-------------------showClusterSoftwareVersionInfo (Async Refactor)-------------------")
 
