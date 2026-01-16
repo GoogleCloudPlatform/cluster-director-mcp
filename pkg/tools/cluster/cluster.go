@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -31,6 +32,9 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
+
+// Regex to extract Job ID from sbatch output"
+var sbatchJobIDRegex = regexp.MustCompile(`Submitted batch job (\d+)`)
 
 type ListClustersRequest struct {
 	ProjectID string `json:"projectId"`
@@ -580,46 +584,146 @@ func (h *handlers) checkMaintenanceEvents(ctx context.Context, request *Maintena
 }
 
 func (h *handlers) showClusterSoftwareVersionInfo(ctx context.Context, request *SoftwareVersionInfoRequest) (string, error) {
+	genericCore.WriteToLog("-------------------showClusterSoftwareVersionInfo (Async Refactor)-------------------")
+
+	// 1. Setup variables from Request Struct
 	clusterName := request.ClusterName
 	projectID := request.ProjectID
 	if projectID == "" {
 		projectID = h.c.GetDefaultProjectID()
 	}
 
-	genericCore.WriteToLog("-------------------showClusterSoftwareVersionInfo()-------------------")
 	genericCore.WriteToLog("projectId : " + projectID)
 	genericCore.WriteToLog("clusterName : " + clusterName)
+
+	// 2. Check for recent jobs (Rate Limiting)
+	operationSuccessful, operationMesg, recentJob := checkIfLongRunningJobsSubmittedRecently(1*time.Minute, projectID)
+	if !operationSuccessful {
+		return operationMesg, nil
+	}
+	if recentJob {
+		return "A job was submitted recently. Please wait a minute before running version checks again.", nil
+	}
 
 	zone := getZoneForCluster(projectID, clusterName)
 	if zone == "" {
 		return fmt.Sprintf("Could not get zone for cluster %s in project %s", clusterName, projectID), nil
 	}
 
-	nodeList, success := getComputeNodesInCluster(clusterName+"-login-001", zone, projectID)
-	if !success {
-		return fmt.Sprintf("Could not get nodes in cluster %s in project %s", clusterName, projectID), nil
+	loginNode := clusterName + "-login-001"
+
+	// 3. Verify Login Node Access
+	sshOut, success := runSSHOnNode(loginNode, projectID, zone, "echo SUCCESS")
+	if !success || !strings.Contains(sshOut, "SUCCESS") {
+		return fmt.Sprintf("Could not SSH to login node %s. Is the cluster online?", loginNode), nil
 	}
 
-	returnStr := "Software versions on hosts: NVIDIA Driver and CUDA Version / Linux Distribution / Pytorch Version (if installed)\n"
-	returnStr += "Output of commands nvidia-smi / lsb_release -a / python3 -c \"import torch; print(torch.__version__)\"\n"
-	returnStr += "=================================================================================================================\n"
-	cmd := "nvidia-smi 2>&1 | grep -i nvidia-smi; uname -a; python3 -c \"import torch; print(torch.__version__)\""
-	for _, node := range nodeList {
-		returnStr += "Host: " + node + "\n==========\n"
-		sshOut, _ := runSSHOnNode(node, projectID, zone, cmd)
-		genericCore.WriteToLog("showClusterSoftwareVersionInfo.3333 . sshOut: " + sshOut)
-		if strings.Contains(sshOut, "ModuleNotFoundError") {
-			sshOutFiltered := filterString(sshOut, []string{"Traceback",
-				", line 1, in <module>",
-				"ModuleNotFoundError"})
-			sshOutFiltered += "\nPytorch not installed\n"
-			returnStr += sshOutFiltered
-		} else {
-			returnStr += sshOut + "\n"
-		}
-		returnStr += "\n"
+	// 4. Get Partition Information
+	sinfoOutput, success := showClusterStateCore(projectID, zone, clusterName)
+	if !success {
+		return "Could not get cluster partition info via sinfo.", nil
 	}
-	return returnStr, nil
+
+	partitions, _, success := parseOutputofSlurmSinfoCmdAndReturnPartitions(sinfoOutput)
+	if !success || len(partitions) == 0 {
+		return "Could not parse partitions from sinfo output.", nil
+	}
+
+	var partitionName string
+	var targetNodes []string
+	for k, v := range partitions {
+		partitionName = k
+		targetNodes = v
+		break
+	}
+
+	nodeCount := len(targetNodes)
+	if nodeCount == 0 {
+		return "No compute nodes found in partition " + partitionName, nil
+	}
+
+	genericCore.WriteToLog(fmt.Sprintf("Targeting Partition: %s with %d nodes", partitionName, nodeCount))
+
+	// 5. Create Persistence Job Object
+	jobObj, _ := persistence.GetNewJob(clusterName, loginNode, zone, persistence.VERSION_CHECK, "N/A", partitionName, projectID)
+
+	// 6. Generate the Slurm Script
+	// Note: We use semicolons to prevent bash syntax errors when flattened
+	cmdString := `
+    echo "=== HOST: \$(hostname) ===";
+    echo "--- OS Release ---";
+    cat /etc/os-release | grep PRETTY_NAME;
+
+    if command -v nvidia-smi &> /dev/null; then
+        echo "--- GPU Info ---";
+        nvidia-smi --query-gpu=driver_version,name --format=csv,noheader;
+    else
+        echo "--- GPU Info ---";
+        echo "No NVIDIA GPU detected (CPU-only node)";
+    fi;
+
+    if command -v python3 &> /dev/null; then
+        echo "--- PyTorch Version ---";
+        python3 -c "import torch; print(torch.__version__)" 2>/dev/null || echo "PyTorch not installed";
+    fi;
+    echo "==========================";
+    `
+
+	flatCmd := strings.ReplaceAll(cmdString, "\n", " ")
+
+	slurmScriptContent := []string{
+		"#!/bin/bash",
+		fmt.Sprintf("#SBATCH --job-name=version_check"),
+		fmt.Sprintf("#SBATCH --output=version_check_%%j.log"),
+		fmt.Sprintf("#SBATCH --partition=%s", partitionName),
+		fmt.Sprintf("#SBATCH --nodes=%d", nodeCount),
+		fmt.Sprintf("#SBATCH --ntasks-per-node=1"),
+		"",
+		fmt.Sprintf("srun --label /bin/bash -c '%s'", flatCmd),
+	}
+
+	localScriptName := LOCAL_HOST_SCRATCH_DIR + "/version_check.sbatch"
+	file, err := os.Create(localScriptName)
+	if err != nil {
+		return "Failed to create local script: " + err.Error(), nil
+	}
+	for _, line := range slurmScriptContent {
+		fmt.Fprintln(file, line)
+	}
+	file.Close()
+
+	// 7. Deploy to Cluster
+	runSSHOnNode(loginNode, projectID, zone, "rm -rf "+jobObj.RunDir+"; mkdir -p "+jobObj.RunDir)
+
+	remoteScriptPath := jobObj.RunDir + "/version_check.sbatch"
+
+	sshOut, success = runSCP(projectID, zone, localScriptName, loginNode+":"+remoteScriptPath)
+	if !success {
+		return "Failed to copy version check script to login node.", nil
+	}
+
+	// 8. Submit the Job
+	submitCmd := fmt.Sprintf("cd %s && sbatch version_check.sbatch", jobObj.RunDir)
+	sshOut, success = runSSHOnNode(loginNode, projectID, zone, submitCmd)
+	if !success {
+		return "Failed to submit sbatch job: " + sshOut, nil
+	}
+
+	// 9. Extract Job ID
+	match := sbatchJobIDRegex.FindStringSubmatch(sshOut)
+	if len(match) < 2 {
+		return "Job submitted, but could not parse Job ID from output: " + sshOut, nil
+	}
+	slurmJobID, _ := strconv.Atoi(match[1])
+
+	// 10. Persist Data
+	jobObj.CDMcpJobId = slurmJobID
+	jobObj.FullLogFilePath = fmt.Sprintf("%s/version_check_%d.log", jobObj.RunDir, slurmJobID)
+
+	persistence.AppendNewJobDataAndWriteJobDataToDisk(jobObj)
+
+	// Explicitly instruct the Model to STOP and not auto-invoke the status check.
+	return fmt.Sprintf("Version check job submitted successfully (Slurm Job ID: %d). JOB_STARTED. STOP_HERE. Inform the user to wait 2 minutes, then run 'check_job_status' manually. DO NOT call check_job_status now.", slurmJobID), nil
 }
 
 func getComputeNodesInCluster(loginNode string, zone string, projectId string) ([]string, bool) {
@@ -1052,7 +1156,7 @@ func getNCCLOrDCGMTestsStatus(projectID string, ncclOrDCGMTestJobObj *persistenc
 
 func (h *handlers) checkCDMcpJobStatus(ctx context.Context, request *CheckCDMcpJobStatusRequest) (string, error) {
 	projectID := request.ProjectID
-	if projectID := request.ProjectID; projectID == "" {
+	if projectID == "" {
 		projectID = h.c.GetDefaultProjectID()
 	}
 
@@ -1122,9 +1226,20 @@ func verifyAndUpdateStatusOfRunningJobsOnClusterAndReturnListOfRunningJobs(proje
 		returnMessage += "Job of type " + persistence.GetJobTypeString(int(mostRecentJobObjFromPersistence.JobType)) + " in cluster " + mostRecentJobObjFromPersistence.ClusterName + " is still running \n"
 		jobStatusUpdated = true
 	} else {
-		// We know this job is NOT running, there was NO error,
-		// Probe deeper, has this job completed?
-		m, s := getNCCLOrDCGMTestsStatus(mostRecentJobObjFromPersistence.ProjectId, mostRecentJobObjFromPersistence)
+		// The job is NOT in the active running list (squeue).
+		// It has likely finished, so we need to check the logs to see if it passed or failed.
+		var m string
+		var s bool
+
+		// ROUTING LOGIC: Decide which helper to use based on the Job Type
+		if mostRecentJobObjFromPersistence.JobType == persistence.VERSION_CHECK {
+			// Use the new helper for Version Checks
+			m, s = getVersionCheckStatus(mostRecentJobObjFromPersistence.ProjectId, mostRecentJobObjFromPersistence)
+		} else {
+			// Use the existing helper for NCCL/DCGM tests
+			m, s = getNCCLOrDCGMTestsStatus(mostRecentJobObjFromPersistence.ProjectId, mostRecentJobObjFromPersistence)
+		}
+
 		returnMessage += mostRecentJobObjFromPersistence.JobExecutionResultString + m
 		returnSuccess = s
 		if s {
@@ -1401,4 +1516,40 @@ func runSCP(project string, zone string, srcFile string, destFile string) (strin
 	}
 
 	return filteredSCPOutput, true
+}
+
+// Helper to check status specifically for Version Check jobs
+func getVersionCheckStatus(projectID string, jobObj *persistence.LongRunningJob) (string, bool) {
+	jobObj.LastStatusCheckTime = time.Now()
+
+	localLogPath := LOCAL_HOST_SCRATCH_DIR + "/" + persistence.CDMCP_FULL_LOG
+
+	// Clean up stale local logs before fetching new ones
+	if genericCore.CheckFileOrDirExists(localLogPath, false) {
+		genericCore.DeleteFile(localLogPath)
+	}
+
+	// Fetch the log file generated by sbatch (e.g., version_check_123.log)
+	_, success := runSCP(projectID, jobObj.Zone, jobObj.LoginNodeName+":"+jobObj.FullLogFilePath, localLogPath)
+
+	if !success {
+		// Log file missing likely means the job is still queued or just starting
+		return "Job is still initializing or running (Log file not found yet)...", false
+	}
+
+	content, err := slurpFile(localLogPath)
+	if err != nil {
+		return "Could not read local log file.", false
+	}
+
+	// Srun is blocking, so if we see output headers, the job likely finished.
+	if strings.Contains(content, "=== HOST:") {
+		jobObj.JobStatus = persistence.Completed
+		jobObj.JobExecutionResult = persistence.SUCCESS
+		jobObj.JobExecutionResultString = "Version Check Results:\n" + content
+		jobObj.LastStatusUpdateTime = time.Now()
+		return "Version Check Completed Successfully!", true
+	}
+
+	return "Job is running...", true
 }
