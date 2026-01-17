@@ -33,9 +33,6 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// Regex to extract Job ID from sbatch output"
-var sbatchJobIDRegex = regexp.MustCompile(`Submitted batch job (\d+)`)
-
 type ListClustersRequest struct {
 	ProjectID string `json:"projectId"`
 }
