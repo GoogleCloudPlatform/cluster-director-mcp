@@ -868,7 +868,7 @@ func runNCCLOrDCGMTestsCore(h *handlers, ctx context.Context, request *RunCluste
 	}
 
 	if thereWasARecentJob {
-		return "Please wait at least 20 minutes after a recent long running job submission", nil
+		return fmt.Sprintf("Please wait at least %s after a recent long running job submission", twentyMins), nil
 	}
 
 	zone := getZoneForCluster(projectID, clusterName)
