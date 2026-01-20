@@ -33,6 +33,8 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
+const versionCheckRetryWindow = 1 * time.Minute
+
 type ListClustersRequest struct {
 	ProjectID string `json:"projectId"`
 }
@@ -603,12 +605,12 @@ func (h *handlers) showClusterSoftwareVersionInfo(ctx context.Context, request *
 	genericCore.WriteToLog("clusterName : " + clusterName)
 
 	// 2. Check for recent jobs (Rate Limiting)
-	operationSuccessful, operationMesg, recentJob := checkIfLongRunningJobsSubmittedRecently(1*time.Minute, projectID)
+	operationSuccessful, operationMesg, recentJob := checkIfLongRunningJobsSubmittedRecently(versionCheckRetryWindow, projectID)
 	if !operationSuccessful {
 		return operationMesg, nil
 	}
 	if recentJob {
-		return "A job was submitted recently. Please wait a minute before running version checks again.", nil
+		return mcp.NewToolResultText(fmt.Sprintf("A job was submitted recently. Please wait %s  before running version checks again.", versionCheckRetryWindow))nil
 	}
 
 	zone := getZoneForCluster(projectID, clusterName)
