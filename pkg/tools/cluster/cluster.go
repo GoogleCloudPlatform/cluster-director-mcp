@@ -33,6 +33,8 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
+var sbatchJobIDRegex = regexp.MustCompile(`Submitted batch job (\d+)`)
+
 const versionCheckRetryWindow = 1 * time.Minute
 
 type ListClustersRequest struct {
@@ -610,7 +612,7 @@ func (h *handlers) showClusterSoftwareVersionInfo(ctx context.Context, request *
 		return operationMesg, nil
 	}
 	if recentJob {
-		return mcp.NewToolResultText(fmt.Sprintf("A job was submitted recently. Please wait %s  before running version checks again.", versionCheckRetryWindow))nil
+		return fmt.Sprintf("A job was submitted recently. Please wait %s  before running version checks again.", versionCheckRetryWindow), nil
 	}
 
 	zone := getZoneForCluster(projectID, clusterName)
