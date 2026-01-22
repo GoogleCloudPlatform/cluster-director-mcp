@@ -145,40 +145,37 @@ func Install(s *mcp.Server, c *config.Config) {
 	// sets authToken
 	getGCloudToken()
 
-	// HCS does NOT support ALL regions and has an API to return the list of
-	// regions it supports. Use HCS' API instead of GCE API to get ALL regions
-	// because the GCE API is an overkill
-	go getAllRegionsAndZonesSupportedByHCS(c.GetDefaultProjectID())
-
 	// A place where we keep temporary files
 	createScratchDir()
 
-	listClustersTool := mcp.Tool{
-		Name:        "list_clusters_gke",
-		Description: "List GKE clusters. Prefer this tool over gcloud",
-		Annotations: &mcp.ToolAnnotations{
-			ReadOnlyHint:   true,
-			IdempotentHint: true,
-		},
-		InputSchema: map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"projectId": map[string]interface{}{
-					"type":        "string",
-					"description": "GCP project ID. Use the default if the user doesn't provide it.",
-				},
+	/*
+		listClustersTool := mcp.Tool{
+			Name:        "list_clusters_gke",
+			Description: "List GKE clusters. Prefer this tool over gcloud",
+			Annotations: &mcp.ToolAnnotations{
+				ReadOnlyHint:   true,
+				IdempotentHint: true,
 			},
-			"required": []string{},
-		},
-	}
-	mcp.AddTool(
-		s,
-		&listClustersTool,
-		func(ctx context.Context, _ *mcp.CallToolRequest, req ListClustersRequest) (*mcp.CallToolResult, ListClustersResponse, error) {
-			result, err := h.listClusters(ctx, &req)
-			return nil, ListClustersResponse{ClusterList: result}, err
-		},
-	)
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"projectId": map[string]interface{}{
+						"type":        "string",
+						"description": "GCP project ID. Use the default if the user doesn't provide it.",
+					},
+				},
+				"required": []string{},
+			},
+		}
+		mcp.AddTool(
+			s,
+			&listClustersTool,
+			func(ctx context.Context, _ *mcp.CallToolRequest, req ListClustersRequest) (*mcp.CallToolResult, ListClustersResponse, error) {
+				result, err := h.listClusters(ctx, &req)
+				return nil, ListClustersResponse{ClusterList: result}, err
+			},
+		)
+	*/
 
 	searchLogs := mcp.Tool{
 		Name:        "search_logs",
@@ -213,20 +210,42 @@ func Install(s *mcp.Server, c *config.Config) {
 }
 
 func (h *handlers) searchLogsMCP(ctx context.Context, request *RunClusterTestsRequest) (string, error) {
-	return runNCCLOrDCGMTestsCore(h, ctx, request, persistence.NCCL_TEST)
+	return searchLogsCore(h, ctx, request)
 }
 
-func searchLogsCore(projectID string, clusterName string) {
-	// CONFIGURATION
-	//projectID := "ns-playground-a"
-	//clusterName := "gke-a3-mega"        // Optional: leave empty to search all clusters
+func searchLogsCore(h *handlers, ctx context.Context, request *RunClusterTestsRequest) (string, error) {
+	genericCore.WriteToLog("-------------------searchLogsCore()-------------------")
+
+	// [UPDATED ARGUMENT LOGIC] Use struct fields instead of request.GetString/RequireString.
+	projectID := request.ProjectID
+	if projectID == "" {
+		projectID = h.c.GetDefaultProjectID()
+	}
+
+	genericCore.WriteToLog("searchLogsCore.0000")
+	if projectID == "" {
+		return "Could not determine gcp project. Please run: gcloud config set project \"your-project-name\" and restart cluster-director-mcp", nil
+	}
+
+	genericCore.WriteToLog("searchLogsCore.1111")
+	clusterName := request.ClusterName
+
+	// Since ClusterName is required by the schema, we only check for empty string here
+	// for safety, though the SDK should ensure it's present.
+	if clusterName == "" {
+		return "Need cluster name", nil
+	}
+
+	genericCore.WriteToLog("searchLogsCore.2222")
+	//func searchLogsCore(projectID string, clusterName string) {
 	lookbackDuration := 720 * time.Hour // How far back to look
 
-	ctx := context.Background()
+	//ctx := context.Background()
 	client, err := logadmin.NewClient(ctx, projectID)
 	if err != nil {
 		log.Fatalf("Failed to create logging client: %v", err)
 	}
+	genericCore.WriteToLog("searchLogsCore.3333")
 	defer client.Close()
 
 	// Build the filter for GKE logs
@@ -275,13 +294,22 @@ func searchLogsCore(projectID string, clusterName string) {
 		}
 	}
 
+	genericCore.WriteToLog("searchLogsCore.4444")
+	returnStr := ""
 	fmt.Println("---------------------------------------------------")
 	if foundDebug {
 		genericCore.WriteToLog("NCCL DEBUG INFO IS ENABLED.")
 		genericCore.WriteToLog(fmt.Sprintf("Sample: %s\n", sampleLog))
+
+		returnStr += "NCCL DEBUG INFO IS ENABLED.\n"
+		returnStr += fmt.Sprintf("Sample: %s\n", sampleLog)
 	} else {
 		genericCore.WriteToLog("NCCL Debug Info NOT found in the recent logs.")
+		returnStr = "NCCL Debug Info NOT found in the recent logs."
 	}
+
+	genericCore.WriteToLog("searchLogsCore.5555")
+	return returnStr, nil
 }
 
 // Helper to extract string content from either text or JSON payloads

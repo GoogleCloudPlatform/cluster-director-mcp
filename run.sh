@@ -76,7 +76,7 @@ echo "..."
 wait $git_pull_make_pid
 if [ -n "$CDMCP_DEBUG" ]; then
     echo "CDMCP_DEBUG is defined."    
-    gemini --debug --allowed-mcp-server-names  context7,cluster-director-gke-ai "$@"
+    gemini --debug --allowed-mcp-server-names  cluster-director-gke-ai "$@"
 else
-    gemini --allowed-mcp-server-names  context7,cluster-director-gke-ai "$@"
+    gemini --allowed-mcp-server-names  cluster-director-gke-ai "$@"
 fi
