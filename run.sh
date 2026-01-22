@@ -28,8 +28,8 @@ git_pull_make_pid=$!
 # Clean scratch
 echo "----"
 echo "Cleaning Scratch space..."
-mkdir -p cluster-director-mcp.scratch 2>&1 > /dev/null
-rm -f cluster-director-mcp.scratch/* 2>&1 > /dev/null &
+mkdir -p scratch 2>&1 > /dev/null
+rm -f scratch/* 2>&1 > /dev/null &
 
 # Check if project is set
 echo "----"
@@ -76,7 +76,7 @@ echo "..."
 wait $git_pull_make_pid
 if [ -n "$CDMCP_DEBUG" ]; then
     echo "CDMCP_DEBUG is defined."    
-    gemini --debug --allowed-mcp-server-names  context7,cluster-director-mcp "$@"
+    gemini --debug --allowed-mcp-server-names  context7,cluster-director-slurm "$@"
 else
-    gemini --allowed-mcp-server-names  context7,cluster-director-mcp "$@"
+    gemini --allowed-mcp-server-names  context7,cluster-director-slurm "$@"
 fi
