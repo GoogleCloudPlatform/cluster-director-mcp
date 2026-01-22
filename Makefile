@@ -20,14 +20,19 @@ REQUIRED_GO_VERSION := 1.24.8
 # Extract the current version (e.g., turns "go version go1.22.3 ..." into "1.22.3")
 CURRENT_GO_VERSION := $(shell go version 2>/dev/null | awk '{print $$3}' | sed 's/^go//')
 
-all: build-cluster-director-slurm
+all: build-cluster-director-slurm build-cluster-director-gke-ai
 
 build-cluster-director-slurm: check-go-version
-	@echo ">> building cluster-director-slurm AI Assistant"
+	@echo ">> Building Cluster Director Slurm AI Assistant"
 	@go build -o ./cluster-director-slurm/ ./cluster-director-slurm/...
+
+build-cluster-director-gke-ai: check-go-version
+	@echo ">> Building Cluster Director GKE AI Assistant"
+	@go build -o ./cluster-director-gke-ai/ ./cluster-director-gke-ai/...
 
 clean:
 	@rm -f *.test cluster-director-slurm/cluster-director-slurm
+	@rm -f *.test cluster-director-gke-ai/cluster-director-gke-ai
 	@rm -rf _output/
 
 check-go-version:

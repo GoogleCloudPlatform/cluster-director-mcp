@@ -33,9 +33,10 @@ def add_extensions_to_gemini_json(file_path):
         print(f"Char Index:    {e.pos}")        
         return
 
-    # Compute path to cluster-director-slurm
+    # Compute path to MCP servers
     current_dir = str(Path.cwd())
     slurm_mcp_binary_path = current_dir + "/cluster-director-slurm/cluster-director-slurm"
+    gke_ai_mcp_binary_path = current_dir + "/cluster-director-gke-ai/cluster-director-gke-ai"
     gemini_md_path = current_dir + "/assets/GEMINI.md"
 
     if 'contextFileName' not in data:
@@ -50,26 +51,39 @@ def add_extensions_to_gemini_json(file_path):
         if 'cluster-director-mcp' in mcp_servers_dict:
             del mcp_servers_dict['cluster-director-mcp']
 
-        # Cluster director Slurm MCP server needs to be added/updated to 
+        # Cluster director GKE MCP server needs to be added/updated to 
         # ensure the binary path is correct
-        print("Adding cluster-director-slurm MCP server")
-        mcp_servers_dict['cluster-director-slurm'] = {
-                "command": slurm_mcp_binary_path,
+        print("Adding cluster-director-gke-ai MCP server")
+        mcp_servers_dict['cluster-director-gke-ai'] = {
+                "command": gke_ai_mcp_binary_path,
                 "trust": True,
                 "timeout": 72000000,
                 "env": {
                     "MCP_SERVER_REQUEST_TIMEOUT": "72000000"
                 }
             }
+
+        # Cluster director Slurm MCP server needs to be added/updated to 
+        # ensure the binary path is correct
+        #print("Adding cluster-director-slurm MCP server")
+        #mcp_servers_dict['cluster-director-slurm'] = {
+        #        "command": slurm_mcp_binary_path,
+        #        "trust": True,
+        #        "timeout": 72000000,
+        #        "env": {
+        #            "MCP_SERVER_REQUEST_TIMEOUT": "72000000"
+        #        }
+        #    }
+
         if 'context7' not in mcp_servers_dict:
             print("Adding context7 MCP server")
             mcp_servers_dict['context7'] = {'httpUrl': "https://mcp.context7.com/mcp"}
         else:
             print("context7 MCP server already present")
     else:
-        print("mcpServers not present in JSON file, adding both cluster-director-slurm and context7")
+        print("mcpServers not present in JSON file, adding both cluster-director-gke-ai")
         data['mcpServers'] = {
-            "cluster-director-slurm": {
+            "cluster-director-gke-ai": {
                 "command": slurm_mcp_binary_path,
                 "trust": "true",
                 "timeout": "72000000",
@@ -81,6 +95,20 @@ def add_extensions_to_gemini_json(file_path):
                 'httpUrl': "https://mcp.context7.com/mcp"
             }
         }
+        print("mcpServers not present in JSON file, adding both cluster-director-slurm")
+        #data['mcpServers'] = {
+        #    "cluster-director-slurm": {
+        #        "command": slurm_mcp_binary_path,
+        #        "trust": "true",
+        #        "timeout": "72000000",
+        #        "env": {
+        #            "MCP_SERVER_REQUEST_TIMEOUT": "72000000"
+        #        }
+        #    },
+        #    'context7': {
+        #        'httpUrl': "https://mcp.context7.com/mcp"
+        #    }
+        #}
 
     # Write updated JSON
     with open(file_path, 'w') as file:
