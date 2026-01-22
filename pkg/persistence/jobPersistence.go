@@ -59,9 +59,9 @@ type LONG_RUNNING_OPERATION int
 
 // The list of long running operation
 const (
-	NCCL_TEST LONG_RUNNING_OPERATION = iota // 0
-	DCGM_TEST                               // 1
-	VERSION_CHECK						   // 2	
+	NCCL_TEST     LONG_RUNNING_OPERATION = iota // 0
+	DCGM_TEST                                   // 1
+	VERSION_CHECK                               // 2
 )
 
 type LongRunningJob struct {

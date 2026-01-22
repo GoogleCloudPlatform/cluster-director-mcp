@@ -7,7 +7,7 @@
 //     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,/qui/mcp
+// distributed under the License is distributed on an "AS IS" BASIS,
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
@@ -22,28 +22,116 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
-
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
 
 	"cluster-director-mcp/pkg/config"
 	"cluster-director-mcp/pkg/genericCore"
 	"cluster-director-mcp/pkg/persistence"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// Regex to extract Job ID from sbatch output"
 var sbatchJobIDRegex = regexp.MustCompile(`Submitted batch job (\d+)`)
+
+const versionCheckRetryWindow = 1 * time.Minute
+
+type ListClustersRequest struct {
+	ProjectID string `json:"projectId"`
+}
+
+type ListClustersResponse struct {
+	ClusterList string `json:"clusterList"`
+}
+
+type GetClusterRequest struct {
+	ClusterName string `json:"clusterName"`
+	ProjectID   string `json:"projectId"`
+}
+
+type GetClusterResponse struct {
+	ClusterInfo string `json:"clusterInfo"`
+}
+
+type MaintenanceEventsRequest struct {
+	ClusterName string `json:"clusterName"`
+	ProjectID   string `json:"projectId"`
+}
+
+type SoftwareVersionInfoRequest struct {
+	ClusterName string `json:"clusterName"`
+	ProjectID   string `json:"projectId"`
+}
+
+type SoftwareVersionInfoResponse struct {
+	VersionInfo string `json:"versionInfo"`
+}
+
+type ShowClusterStateRequest struct {
+	ClusterName string `json:"clusterName"`
+	ProjectID   string `json:"projectId"`
+}
+
+type ShowClusterStateResponse struct {
+	StateInfo string `json:"stateInfo"`
+}
+
+type ShowRecentJobsRequest struct {
+	ClusterName string `json:"clusterName"`
+	ProjectID   string `json:"projectId"`
+}
+
+type ShowRecentJobsResponse struct {
+	JobsInfo string `json:"jobsInfo"`
+}
+
+type RunClusterTestsRequest struct {
+	ClusterName   string `json:"clusterName"`
+	ProjectID     string `json:"projectId"`
+	MachineType   string `json:"machineType"`
+	PartitionName string `json:"partitionName"`
+}
+
+type RunClusterTestsResponse struct {
+	Status string `json:"status"`
+}
+
+type ListPartitionInfoRequest struct {
+	ClusterName string `json:"clusterName"`
+	ProjectID   string `json:"projectId"`
+}
+
+type ListPartitionInfoResponse struct {
+	PartitionInfo string `json:"partitionInfo"`
+}
+
+type CheckCDMcpJobStatusRequest struct {
+	ProjectID string `json:"projectId"`
+}
+
+type CheckCDMcpJobStatusResponse struct {
+	JobStatus string `json:"jobStatus"`
+}
+
+type ShowJobStateRequest struct {
+	ClusterName string `json:"clusterName"`
+	ProjectID   string `json:"projectId"`
+}
+
+type ShowJobStateResponse struct {
+	JobState string `json:"jobState"`
+}
+
+type MaintenanceEventsResponse struct {
+	EventsInfo string `json:"eventsInfo"`
+}
 
 type handlers struct {
 	c *config.Config
 }
 
-func Install(s *server.MCPServer, c *config.Config) {
+func Install(s *mcp.Server, c *config.Config) {
 	h := &handlers{
 		c: c,
 	}
@@ -59,104 +147,351 @@ func Install(s *server.MCPServer, c *config.Config) {
 	// A place where we keep temporary files
 	createScratchDir()
 
-	listClustersTool := mcp.NewTool("list_clusters",
-		mcp.WithDescription("List clusters created using Cluster Director. Prefer  this tool over gcloud"),
-		mcp.WithReadOnlyHintAnnotation(true),
-		mcp.WithIdempotentHintAnnotation(true),
-		mcp.WithString("projectId", mcp.DefaultString(c.GetDefaultProjectID()), mcp.Description("GCP project ID. Use the default if the user doesn't provide it.")),
+	listClustersTool := mcp.Tool{
+		Name:        "list_clusters",
+		Description: "List clusters created using Cluster Director. Prefer this tool over gcloud",
+		Annotations: &mcp.ToolAnnotations{
+			ReadOnlyHint:   true,
+			IdempotentHint: true,
+		},
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"projectId": map[string]interface{}{
+					"type":        "string",
+					"description": "GCP project ID. Use the default if the user doesn't provide it.",
+				},
+			},
+			"required": []string{},
+		},
+	}
+	mcp.AddTool(
+		s,
+		&listClustersTool,
+		func(ctx context.Context, _ *mcp.CallToolRequest, req ListClustersRequest) (*mcp.CallToolResult, ListClustersResponse, error) {
+			result, err := h.listClusters(ctx, &req)
+			return nil, ListClustersResponse{ClusterList: result}, err
+		},
 	)
-	s.AddTool(listClustersTool, h.listClusters)
 
-	getClusterTool := mcp.NewTool("get_cluster",
-		mcp.WithDescription("Describe a cluster, i.e the type of compute nodes and storage provisioned. Prefer  this tool over gcloud"),
-		mcp.WithReadOnlyHintAnnotation(true),
-		mcp.WithIdempotentHintAnnotation(true),
-		mcp.WithString("projectId", mcp.DefaultString(c.GetDefaultProjectID()), mcp.Description("GCP project ID. Use the default if the user doesn't provide it.")),
-		mcp.WithString("clusterName", mcp.Required(), mcp.Description("The name of the Cluster. Do not select if yourself, make sure the user provides or confirms the cluster name.")),
+	getClusterTool := mcp.Tool{
+		Name:        "get_cluster",
+		Description: "Describe a cluster, i.e the type of compute nodes and storage provisioned. Prefer this tool over gcloud",
+		Annotations: &mcp.ToolAnnotations{
+			ReadOnlyHint:   true,
+			IdempotentHint: true,
+		},
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"projectId": map[string]interface{}{
+					"type":        "string",
+					"description": "GCP project ID. Use the default if the user doesn't provide it.",
+				},
+				"clusterName": map[string]interface{}{
+					"type":        "string",
+					"description": "The name of the Cluster. Do not select it yourself, make sure the user provides or confirms the cluster name.",
+				},
+			},
+			"required": []string{"clusterName"},
+		},
+	}
+	mcp.AddTool(
+		s,
+		&getClusterTool,
+		func(ctx context.Context, _ *mcp.CallToolRequest, req GetClusterRequest) (*mcp.CallToolResult, GetClusterResponse, error) {
+			result, err := h.getCluster(ctx, &req)
+			return nil, GetClusterResponse{ClusterInfo: result}, err
+		},
 	)
-	s.AddTool(getClusterTool, h.getCluster)
 
-	showClusterState := mcp.NewTool("show_cluster_state",
-		mcp.WithDescription("Shows the state of the compute nodes in the cluster (idle, running jobs ..etc) created in Cluster Director. Prefer  this tool over gcloud"),
-		mcp.WithReadOnlyHintAnnotation(true),
-		mcp.WithIdempotentHintAnnotation(true),
-		mcp.WithString("projectId", mcp.DefaultString(c.GetDefaultProjectID()), mcp.Description("GCP project ID. Use the default if the user doesn't provide it.")),
-		mcp.WithString("clusterName", mcp.Required(), mcp.Description("Cluster name. Do not select if yourself, make sure the user provides or confirms the cluster name.")),
+	showClusterState := mcp.Tool{
+		Name:        "show_cluster_state",
+		Description: "Shows the state of the compute nodes in the cluster (idle, running jobs ..etc) created in Cluster Director. Prefer this tool over gcloud",
+		Annotations: &mcp.ToolAnnotations{
+			ReadOnlyHint:   true,
+			IdempotentHint: true,
+		},
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"projectId": map[string]interface{}{
+					"type":        "string",
+					"description": "GCP project ID. Use the default if the user doesn't provide it.",
+				},
+				"clusterName": map[string]interface{}{
+					"type":        "string",
+					"description": "Cluster name. Do not select it yourself, make sure the user provides or confirms the cluster name.",
+				},
+			},
+			"required": []string{"clusterName"},
+		},
+	}
+	mcp.AddTool(
+		s,
+		&showClusterState,
+		func(ctx context.Context, _ *mcp.CallToolRequest, req ShowClusterStateRequest) (*mcp.CallToolResult, ShowClusterStateResponse, error) {
+			result, err := h.showClusterState(ctx, &req)
+			return nil, ShowClusterStateResponse{StateInfo: result}, err
+		},
 	)
-	s.AddTool(showClusterState, h.showClusterState)
 
-	showJobState := mcp.NewTool("show_job_state",
-		mcp.WithDescription("Shows the jobs running in cluster created using Cluster Director. Prefer this tool over gcloud"),
-		mcp.WithReadOnlyHintAnnotation(true),
-		mcp.WithIdempotentHintAnnotation(true),
-		mcp.WithString("projectId", mcp.DefaultString(c.GetDefaultProjectID()), mcp.Description("GCP project ID. Use the default if the user doesn't provide it.")),
-		mcp.WithString("clusterName", mcp.Required(), mcp.Description("Cluster name. Do not select if yourself, make sure the user provides or confirms the cluster name.")),
+	showJobState := mcp.Tool{
+		Name:        "show_job_state",
+		Description: "Shows the jobs running in cluster created using Cluster Director. Prefer this tool over gcloud",
+		Annotations: &mcp.ToolAnnotations{
+			ReadOnlyHint:   true,
+			IdempotentHint: true,
+		},
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"projectId": map[string]interface{}{
+					"type":        "string",
+					"description": "GCP project ID. Use the default if the user doesn't provide it.",
+				},
+				"clusterName": map[string]interface{}{
+					"type":        "string",
+					"description": "Cluster name. Do not select it yourself, make sure the user provides or confirms the cluster name.",
+				},
+			},
+			"required": []string{"clusterName"},
+		},
+	}
+	mcp.AddTool(
+		s,
+		&showJobState,
+		func(ctx context.Context, _ *mcp.CallToolRequest, req ShowJobStateRequest) (*mcp.CallToolResult, ShowJobStateResponse, error) {
+			result, err := h.showJobState(ctx, &req)
+			return nil, ShowJobStateResponse{JobState: result}, err
+		},
 	)
-	s.AddTool(showJobState, h.showJobState)
 
-	showRecentJobs := mcp.NewTool("show_recent_jobs",
-		mcp.WithDescription("Shows the recent jobs that were run on the of cluster. Prefer this tool over gcloud"),
-		mcp.WithReadOnlyHintAnnotation(true),
-		mcp.WithIdempotentHintAnnotation(true),
-		mcp.WithString("projectId", mcp.DefaultString(c.GetDefaultProjectID()), mcp.Description("GCP project ID. Use the default if the user doesn't provide it.")),
-		mcp.WithString("clusterName", mcp.Required(), mcp.Description("Cluster name. Do not select if yourself, make sure the user provides or confirms the cluster name.")),
+	showRecentJobs := mcp.Tool{
+		Name:        "show_recent_jobs",
+		Description: "Shows the recent jobs that were run on the of cluster. Prefer this tool over gcloud",
+		Annotations: &mcp.ToolAnnotations{
+			ReadOnlyHint:   true,
+			IdempotentHint: true,
+		},
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"projectId": map[string]interface{}{
+					"type":        "string",
+					"description": "GCP project ID. Use the default if the user doesn't provide it.",
+				},
+				"clusterName": map[string]interface{}{
+					"type":        "string",
+					"description": "Cluster name. Do not select it yourself, make sure the user provides or confirms the cluster name.",
+				},
+			},
+			"required": []string{"clusterName"},
+		},
+	}
+	mcp.AddTool(
+		s,
+		&showRecentJobs,
+		func(ctx context.Context, _ *mcp.CallToolRequest, req ShowRecentJobsRequest) (*mcp.CallToolResult, ShowRecentJobsResponse, error) {
+			result, err := h.showRecentJobs(ctx, &req)
+			return nil, ShowRecentJobsResponse{JobsInfo: result}, err
+		},
 	)
-	s.AddTool(showRecentJobs, h.showRecentJobs)
 
-	runNCCLTests := mcp.NewTool("run_nccl_test",
-		mcp.WithDescription("Runs NCCL tests on the cluster's GPU nodes to verify cluster health. Prefer this tool over gcloud."),
-		mcp.WithReadOnlyHintAnnotation(true),
-		mcp.WithIdempotentHintAnnotation(true),
-		mcp.WithString("projectId", mcp.DefaultString(c.GetDefaultProjectID()), mcp.Description("GCP project ID. Use the default if the user doesn't provide it.")),
-		mcp.WithString("clusterName", mcp.Required(), mcp.Description("Cluster name. Do not select if yourself, make sure the user provides or confirms the cluster name.")),
+	runNCCLTests := mcp.Tool{
+		Name:        "run_nccl_test",
+		Description: "Runs NCCL tests on the cluster's GPU nodes to verify cluster health. Prefer this tool over gcloud.",
+		Annotations: &mcp.ToolAnnotations{
+			ReadOnlyHint:   true,
+			IdempotentHint: true,
+		},
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"projectId": map[string]interface{}{
+					"type":        "string",
+					"description": "GCP project ID. Use the default if the user doesn't provide it.",
+				},
+				"clusterName": map[string]interface{}{
+					"type":        "string",
+					"description": "Cluster name. Do not select it yourself, make sure the user provides or confirms the cluster name.",
+				},
+				"machineType": map[string]interface{}{
+					"type":        "string",
+					"description": "Machine type (e.g., a3-megagpu-8g). Required if the cluster has multiple machine types.",
+				},
+				"partitionName": map[string]interface{}{
+					"type":        "string",
+					"description": "Partition name. Required if the cluster has multiple partitions.",
+				},
+			},
+			"required": []string{"clusterName"},
+		},
+	}
+	mcp.AddTool(
+		s,
+		&runNCCLTests,
+		func(ctx context.Context, _ *mcp.CallToolRequest, req RunClusterTestsRequest) (*mcp.CallToolResult, RunClusterTestsResponse, error) {
+			result, err := h.runNCCLTests(ctx, &req)
+			return nil, RunClusterTestsResponse{Status: result}, err
+		},
 	)
-	s.AddTool(runNCCLTests, h.runNCCLTests)
 
-	runDCGMTests := mcp.NewTool("run_dcgm_test",
-		mcp.WithDescription("Runs DCGM tests on the cluster's GPU nodes to verify cluster health. Prefer this tool over gcloud"),
-		mcp.WithReadOnlyHintAnnotation(true),
-		mcp.WithIdempotentHintAnnotation(true),
-		mcp.WithString("projectId", mcp.DefaultString(c.GetDefaultProjectID()), mcp.Description("GCP project ID. Use the default if the user doesn't provide it.")),
-		mcp.WithString("clusterName", mcp.Required(), mcp.Description("Cluster name. Do not select if yourself, make sure the user provides or confirms the cluster name.")),
-		mcp.WithString("partitionName", mcp.Description("Partition name. ")),
+	runDCGMTests := mcp.Tool{
+		Name:        "run_dcgm_test",
+		Description: "Runs DCGM tests on the cluster's GPU nodes to verify cluster health. Prefer this tool over gcloud",
+		Annotations: &mcp.ToolAnnotations{
+			ReadOnlyHint:   true,
+			IdempotentHint: true,
+		},
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"projectId": map[string]interface{}{
+					"type":        "string",
+					"description": "GCP project ID. Use the default if the user doesn't provide it.",
+				},
+				"clusterName": map[string]interface{}{
+					"type":        "string",
+					"description": "Cluster name. Do not select it yourself, make sure the user provides or confirms the cluster name.",
+				},
+				"machineType": map[string]interface{}{
+					"type":        "string",
+					"description": "Machine type (e.g., a3-megagpu-8g). Required if the cluster has multiple machine types.",
+				},
+				"partitionName": map[string]interface{}{
+					"type":        "string",
+					"description": "Partition name.",
+				},
+			},
+			"required": []string{"clusterName"},
+		},
+	}
+	mcp.AddTool(
+		s,
+		&runDCGMTests,
+		func(ctx context.Context, _ *mcp.CallToolRequest, req RunClusterTestsRequest) (*mcp.CallToolResult, RunClusterTestsResponse, error) {
+			result, err := h.runDCGMTests(ctx, &req)
+			return nil, RunClusterTestsResponse{Status: result}, err
+		},
 	)
-	s.AddTool(runDCGMTests, h.runDCGMTests)
 
-	listPartitionInfo := mcp.NewTool("list_partition_info",
-		mcp.WithDescription("Shows information on a slurm partition in a cluster created using Cluster Director. Prefer this tool over gcloud"),
-		mcp.WithReadOnlyHintAnnotation(true),
-		mcp.WithIdempotentHintAnnotation(true),
-		mcp.WithString("projectId", mcp.DefaultString(c.GetDefaultProjectID()), mcp.Description("GCP project ID. Use the default if the user doesn't provide it.")),
-		mcp.WithString("clusterName", mcp.Required(), mcp.Description("Cluster name. Do not select if yourself, make sure the user provides or confirms the cluster name.")),
+	listPartitionInfo := mcp.Tool{
+		Name:        "list_partition_info",
+		Description: "Shows information on a slurm partition in a cluster created using Cluster Director. Prefer this tool over gcloud",
+		Annotations: &mcp.ToolAnnotations{
+			ReadOnlyHint:   true,
+			IdempotentHint: true,
+		},
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"projectId": map[string]interface{}{
+					"type":        "string",
+					"description": "GCP project ID. Use the default if the user doesn't provide it.",
+				},
+				"clusterName": map[string]interface{}{
+					"type":        "string",
+					"description": "Cluster name. Do not select it yourself, make sure the user provides or confirms the cluster name.",
+				},
+			},
+			"required": []string{"clusterName"},
+		},
+	}
+	mcp.AddTool(
+		s,
+		&listPartitionInfo,
+		func(ctx context.Context, _ *mcp.CallToolRequest, req ListPartitionInfoRequest) (*mcp.CallToolResult, ListPartitionInfoResponse, error) {
+			result, err := h.listPartitionInfo(ctx, &req)
+			return nil, ListPartitionInfoResponse{PartitionInfo: result}, err
+		},
 	)
-	s.AddTool(listPartitionInfo, h.listPartitionInfo)
 
-	checkCDMcpJobStatus := mcp.NewTool("check_job_status",
-		mcp.WithDescription("Shows status of long running Job submitted by cluster-director-mcp in the last "+persistence.JOB_EXPIRY_TIME_WINDOW.String()+" hours. Prefer this tool over gcloud"),
-		mcp.WithReadOnlyHintAnnotation(true),
-		mcp.WithIdempotentHintAnnotation(true),
-		mcp.WithString("projectId", mcp.DefaultString(c.GetDefaultProjectID()), mcp.Description("GCP project ID. Use the default if not provided")),
-	)
-	s.AddTool(checkCDMcpJobStatus, h.checkCDMcpJobStatus)
+	checkCDMcpJobStatus := mcp.Tool{
+		Name:        "check_job_status",
+		Description: "Shows status of long running Job submitted by cluster-director-mcp in the last " + persistence.JOB_EXPIRY_TIME_WINDOW.String() + " hours. Prefer this tool over gcloud",
+		Annotations: &mcp.ToolAnnotations{
+			ReadOnlyHint:   true,
+			IdempotentHint: true,
+		},
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"projectId": map[string]interface{}{
+					"type":        "string",
+					"description": "GCP project ID. Use the default if not provided",
+				},
+			},
+			"required": []string{},
+		},
+	}
+	mcp.AddTool(
+		s,
+		&checkCDMcpJobStatus,
+		func(ctx context.Context, _ *mcp.CallToolRequest, req CheckCDMcpJobStatusRequest) (*mcp.CallToolResult, CheckCDMcpJobStatusResponse, error) {
+			result, err := h.checkCDMcpJobStatus(ctx, &req)
+			return nil, CheckCDMcpJobStatusResponse{JobStatus: result}, err
+		})
 
-	checkMaintenanceEvents := mcp.NewTool("check_maintenance",
-		mcp.WithDescription("Checks for maintenance events for ALL the compute (GPU) nodes inthe cluster. Prefer this tool over gcloud"),
-		mcp.WithReadOnlyHintAnnotation(true),
-		mcp.WithIdempotentHintAnnotation(true),
-		mcp.WithString("projectId", mcp.DefaultString(c.GetDefaultProjectID()), mcp.Description("GCP project ID. Use the default if not provided")),
-		mcp.WithString("clusterName", mcp.Required(), mcp.Description("Cluster name. Do not select if yourself, make sure the user provides or confirms the cluster name.")),
-	)
-	s.AddTool(checkMaintenanceEvents, h.checkMaintenanceEvents)
+	checkMaintenanceEvents := mcp.Tool{
+		Name:        "check_maintenance",
+		Description: "Checks for maintenance events for ALL the compute (GPU) nodes in the cluster. Prefer this tool over gcloud",
+		Annotations: &mcp.ToolAnnotations{
+			ReadOnlyHint:   true,
+			IdempotentHint: true,
+		},
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"projectId": map[string]interface{}{
+					"type":        "string",
+					"description": "GCP project ID. Use the default if not provided",
+				},
+				"clusterName": map[string]interface{}{
+					"type":        "string",
+					"description": "Cluster name. Do not select it yourself, make sure the user provides or confirms the cluster name.",
+				},
+			},
+			"required": []string{"clusterName"},
+		},
+	}
+	mcp.AddTool(
+		s,
+		&checkMaintenanceEvents,
+		func(ctx context.Context, _ *mcp.CallToolRequest, req MaintenanceEventsRequest) (*mcp.CallToolResult, MaintenanceEventsResponse, error) {
+			result, err := h.checkMaintenanceEvents(ctx, &req)
+			return nil, MaintenanceEventsResponse{EventsInfo: result}, err
+		})
 
-	showClusterSoftwareVersionInfo := mcp.NewTool("show_cluster_software_version_info",
-		mcp.WithDescription("Show the software versions for ALL the compute (GPU) nodes in the cluster. Prefer this tool over gcloud"),
-		mcp.WithReadOnlyHintAnnotation(true),
-		mcp.WithIdempotentHintAnnotation(true),
-		mcp.WithString("projectId", mcp.DefaultString(c.GetDefaultProjectID()), mcp.Description("GCP project ID. Use the default if not provided")),
-		mcp.WithString("clusterName", mcp.Required(), mcp.Description("Cluster name. Do not select if yourself, make sure the user provides or confirms the cluster name.")),
-	)
-	s.AddTool(showClusterSoftwareVersionInfo, h.showClusterSoftwareVersionInfo)
-
+	showClusterSoftwareVersionInfo := mcp.Tool{
+		Name:        "show_cluster_software_version_info",
+		Description: "Show the software versions for ALL the compute (GPU) nodes in the cluster. Prefer this tool over gcloud",
+		Annotations: &mcp.ToolAnnotations{
+			ReadOnlyHint:   true,
+			IdempotentHint: true,
+		},
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"projectId": map[string]interface{}{
+					"type":        "string",
+					"description": "GCP project ID. Use the default if not provided",
+				},
+				"clusterName": map[string]interface{}{
+					"type":        "string",
+					"description": "Cluster name. Do not select it yourself, make sure the user provides or confirms the cluster name.",
+				},
+			},
+			"required": []string{"clusterName"},
+		},
+	}
+	mcp.AddTool(
+		s,
+		&showClusterSoftwareVersionInfo,
+		func(ctx context.Context, _ *mcp.CallToolRequest, req SoftwareVersionInfoRequest) (*mcp.CallToolResult, SoftwareVersionInfoResponse, error) {
+			result, err := h.showClusterSoftwareVersionInfo(ctx, &req)
+			return nil, SoftwareVersionInfoResponse{VersionInfo: result}, err
+		})
 }
 
 // Place on local host to store files
@@ -176,51 +511,53 @@ func createScratchDir() bool {
 	return true
 }
 
-func (h *handlers) listClusters(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	projectID := h.c.GetDefaultProjectID()
+func (h *handlers) listClusters(ctx context.Context, request *ListClustersRequest) (string, error) {
+	projectID := request.ProjectID
+	if projectID == "" {
+		projectID = h.c.GetDefaultProjectID()
+	}
 	genericCore.WriteToLog("-------------------listClusters()-------------------")
 	genericCore.WriteToLog("projectId : " + projectID)
-
-	return mcp.NewToolResultText(getClustersInAllRegions(h.c.GetDefaultProjectID())), nil
+	clusterListString, _ := getClustersInAllRegions(projectID)
+	return clusterListString, nil
 }
 
-func (h *handlers) getCluster(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	clusterName, err := request.RequireString("clusterName")
-	if err != nil {
-		return mcp.NewToolResultText("Need cluster name"), nil
+func (h *handlers) getCluster(ctx context.Context, request *GetClusterRequest) (string, error) {
+	clusterName := request.ClusterName
+	projectID := request.ProjectID
+	if projectID == "" {
+		projectID = h.c.GetDefaultProjectID()
 	}
-	projectID := h.c.GetDefaultProjectID()
 	genericCore.WriteToLog("-------------------getCluster()-------------------")
 	genericCore.WriteToLog("projectId : " + projectID)
 	genericCore.WriteToLog("clusterName : " + clusterName)
 
-	// If there is no information, fetch it
 	getClustersInAllRegions(h.c.GetDefaultProjectID())
-	if _, ok := clusterNames2JSON[clusterName]; ok {
-		return mcp.NewToolResultText(clusterNames2JSON[clusterName]), nil
+	if clusterJSON, ok := clusterNames2JSON[clusterName]; ok {
+		return clusterJSON, nil
 	} else {
-		return mcp.NewToolResultText("Could not get information on cluster + " + clusterName + " in project " + projectID), nil
+		return fmt.Sprintf("Could not get information on cluster %s in project %s", clusterName, projectID), nil
 	}
 }
 
-func (h *handlers) checkMaintenanceEvents(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	clusterName, err := request.RequireString("clusterName")
-	if err != nil {
-		return mcp.NewToolResultText("Need cluster name"), nil
+func (h *handlers) checkMaintenanceEvents(ctx context.Context, request *MaintenanceEventsRequest) (string, error) {
+	clusterName := request.ClusterName
+	projectID := request.ProjectID
+	if projectID == "" {
+		projectID = h.c.GetDefaultProjectID()
 	}
-	projectID := h.c.GetDefaultProjectID()
+
 	genericCore.WriteToLog("-------------------checkMaintenanceEvents()-------------------")
 	genericCore.WriteToLog("projectId : " + projectID)
 	genericCore.WriteToLog("clusterName : " + clusterName)
 
 	zone := getZoneForCluster(projectID, clusterName)
 	if zone == "" {
-		return mcp.NewToolResultText("Could not get zone for cluster " + clusterName + " in project " + projectID), nil
+		return fmt.Sprintf("Could not get zone for cluster %s in project %s", clusterName, projectID), nil
 	}
-
 	nodeList, success := getComputeNodesInCluster(clusterName+"-login-001", zone, projectID)
 	if !success {
-		return mcp.NewToolResultText("Could not get nodes in cluster " + clusterName + " in project " + projectID), nil
+		return fmt.Sprintf("Could not get nodes in cluster %s in project %s", clusterName, projectID), nil
 	}
 
 	returnStr := ""
@@ -236,7 +573,7 @@ func (h *handlers) checkMaintenanceEvents(ctx context.Context, request mcp.CallT
 				line := strings.TrimSpace(scanner.Text())
 				if line == "upcomingMaintenance:" {
 					for i := 0; i < 5 && scanner.Scan(); i++ {
-						returnStr += line
+						returnStr += scanner.Text() + "\n"
 					}
 				}
 			}
@@ -244,7 +581,7 @@ func (h *handlers) checkMaintenanceEvents(ctx context.Context, request mcp.CallT
 			returnStr += " No events \n"
 		}
 	}
-	return mcp.NewToolResultText(returnStr), nil
+	return returnStr, nil
 }
 
 // Check node state before SSH'ing into the node
@@ -256,46 +593,50 @@ func (h *handlers) checkMaintenanceEvents(ctx context.Context, request mcp.CallT
 // part1*       up   infinite     59  down# xxxx-nodeset1-[0-35,37-39,41-45,47-50,52-59,61-63]
 // part1*       up   infinite      5   idle xxxx-nodeset1-[36,40,46,51,60]
 
-func (h *handlers) showClusterSoftwareVersionInfo(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (h *handlers) showClusterSoftwareVersionInfo(ctx context.Context, request *SoftwareVersionInfoRequest) (string, error) {
 	genericCore.WriteToLog("-------------------showClusterSoftwareVersionInfo (Async Refactor)-------------------")
 
-	projectID := request.GetString("projectId", h.c.GetDefaultProjectID())
+	// 1. Setup variables from Request Struct
+	clusterName := request.ClusterName
+	projectID := request.ProjectID
 	if projectID == "" {
-		return mcp.NewToolResultText("Could not determine GCP project."), nil
-	}
-	clusterName, err := request.RequireString("clusterName")
-	if err != nil {
-		return mcp.NewToolResultText("Cluster name is required"), nil
+		projectID = h.c.GetDefaultProjectID()
 	}
 
-	operationSuccessful, operationMesg, recentJob := checkIfLongRunningJobsSubmittedRecently(1*time.Minute, projectID)
+	genericCore.WriteToLog("projectId : " + projectID)
+	genericCore.WriteToLog("clusterName : " + clusterName)
+
+	// 2. Check for recent jobs (Rate Limiting)
+	operationSuccessful, operationMesg, recentJob := checkIfLongRunningJobsSubmittedRecently(versionCheckRetryWindow, projectID)
 	if !operationSuccessful {
-		return mcp.NewToolResultText(operationMesg), nil
+		return operationMesg, nil
 	}
 	if recentJob {
-		return mcp.NewToolResultText("A job was submitted recently. Please wait a minute before running version checks again."), nil
+		return fmt.Sprintf("A job was submitted recently. Please wait %s  before running version checks again.", versionCheckRetryWindow), nil
 	}
 
 	zone := getZoneForCluster(projectID, clusterName)
 	if zone == "" {
-		return mcp.NewToolResultText("Could not get zone for cluster " + clusterName), nil
+		return fmt.Sprintf("Could not get zone for cluster %s in project %s", clusterName, projectID), nil
 	}
 
 	loginNode := clusterName + "-login-001"
 
+	// 3. Verify Login Node Access
 	sshOut, success := runSSHOnNode(loginNode, projectID, zone, "echo SUCCESS")
 	if !success || !strings.Contains(sshOut, "SUCCESS") {
-		return mcp.NewToolResultText("Could not SSH to login node " + loginNode + ". Is the cluster online?"), nil
+		return fmt.Sprintf("Could not SSH to login node %s. Is the cluster online?", loginNode), nil
 	}
 
+	// 4. Get Partition Information
 	sinfoOutput, success := showClusterStateCore(projectID, zone, clusterName)
 	if !success {
-		return mcp.NewToolResultText("Could not get cluster partition info via sinfo."), nil
+		return "Could not get cluster partition info via sinfo.", nil
 	}
 
 	partitions, _, success := parseOutputofSlurmSinfoCmdAndReturnPartitions(sinfoOutput)
 	if !success || len(partitions) == 0 {
-		return mcp.NewToolResultText("Could not parse partitions from sinfo output."), nil
+		return "Could not parse partitions from sinfo output.", nil
 	}
 
 	var partitionName string
@@ -308,15 +649,16 @@ func (h *handlers) showClusterSoftwareVersionInfo(ctx context.Context, request m
 
 	nodeCount := len(targetNodes)
 	if nodeCount == 0 {
-		return mcp.NewToolResultText("No compute nodes found in partition " + partitionName), nil
+		return "No compute nodes found in partition " + partitionName, nil
 	}
 
 	genericCore.WriteToLog(fmt.Sprintf("Targeting Partition: %s with %d nodes", partitionName, nodeCount))
 
+	// 5. Create Persistence Job Object
 	jobObj, _ := persistence.GetNewJob(clusterName, loginNode, zone, persistence.VERSION_CHECK, "N/A", partitionName, projectID)
 
-	// Bash script to run on compute nodes via srun.
-	// We check for nvidia-smi and python/torch presence to handle both CPU and GPU nodes gracefully.
+	// 6. Generate the Slurm Script
+	// Note: We use semicolons to prevent bash syntax errors when flattened
 	cmdString := `
     echo "=== HOST: \$(hostname) ===";
     echo "--- OS Release ---";
@@ -347,182 +689,56 @@ func (h *handlers) showClusterSoftwareVersionInfo(ctx context.Context, request m
 		fmt.Sprintf("#SBATCH --nodes=%d", nodeCount),
 		fmt.Sprintf("#SBATCH --ntasks-per-node=1"),
 		"",
-
 		fmt.Sprintf("srun --label /bin/bash -c '%s'", flatCmd),
 	}
 
 	localScriptName := LOCAL_HOST_SCRATCH_DIR + "/version_check.sbatch"
 	file, err := os.Create(localScriptName)
 	if err != nil {
-		return mcp.NewToolResultText("Failed to create local script: " + err.Error()), nil
+		return "Failed to create local script: " + err.Error(), nil
 	}
 	for _, line := range slurmScriptContent {
 		fmt.Fprintln(file, line)
 	}
 	file.Close()
 
+	// 7. Deploy to Cluster
 	runSSHOnNode(loginNode, projectID, zone, "rm -rf "+jobObj.RunDir+"; mkdir -p "+jobObj.RunDir)
 
 	remoteScriptPath := jobObj.RunDir + "/version_check.sbatch"
 
 	sshOut, success = runSCP(projectID, zone, localScriptName, loginNode+":"+remoteScriptPath)
 	if !success {
-		return mcp.NewToolResultText("Failed to copy version check script to login node."), nil
+		return "Failed to copy version check script to login node.", nil
 	}
 
+	// 8. Submit the Job
 	submitCmd := fmt.Sprintf("cd %s && sbatch version_check.sbatch", jobObj.RunDir)
 	sshOut, success = runSSHOnNode(loginNode, projectID, zone, submitCmd)
 	if !success {
-		return mcp.NewToolResultText("Failed to submit sbatch job: " + sshOut), nil
+		return "Failed to submit sbatch job: " + sshOut, nil
 	}
 
+	// 9. Extract Job ID
 	match := sbatchJobIDRegex.FindStringSubmatch(sshOut)
 	if len(match) < 2 {
-		return mcp.NewToolResultText("Job submitted, but could not parse Job ID from output: " + sshOut), nil
+		return "Job submitted, but could not parse Job ID from output: " + sshOut, nil
 	}
 	slurmJobID, _ := strconv.Atoi(match[1])
 
+	// 10. Persist Data
 	jobObj.CDMcpJobId = slurmJobID
 	jobObj.FullLogFilePath = fmt.Sprintf("%s/version_check_%d.log", jobObj.RunDir, slurmJobID)
 
 	persistence.AppendNewJobDataAndWriteJobDataToDisk(jobObj)
 
 	// Explicitly instruct the Model to STOP and not auto-invoke the status check.
-	return mcp.NewToolResultText(fmt.Sprintf("Version check job submitted successfully (Slurm Job ID: %d). JOB_STARTED. STOP_HERE. Inform the user to wait 2 minutes, then run 'check_job_status' manually. DO NOT call check_job_status now.", slurmJobID)), nil
-}
-
-// To be completed later
-// This function buckets
-func aggregateResults(buckets map[string][]string) map[string]string {
-	var bucketedResults = make(map[string]string)
-	trailingIntegersRegexp := regexp.MustCompile(`(\d+)$`)
-	var firstElement int
-	var lastElement int
-	var nodeNamePrefix string
-	genericCore.WriteToLog("aggregateResults.0000")
-	for bucket, nodeList := range buckets {
-		genericCore.WriteToLog("\n====\naggregateResults.1111.AAAA . Processing bucket: " + bucket)
-		genericCore.WriteToLog("aggregateResults.1111.BBBB . Processing nodeList: " + strings.Join(nodeList, ","))
-		genericCore.WriteToLog("================================")
-		var bucketableNodes []int
-
-		bucketCanBeCollapsed := true
-		nodeNamePrefixRegexp := regexp.MustCompile(`(.*?)\d+$`)
-		matches := nodeNamePrefixRegexp.FindStringSubmatch(nodeList[0])
-
-		genericCore.WriteToLog("aggregateResults.2222")
-		// A successful match will have 3 elements (full match + two capture groups).
-		if len(matches) < 2 {
-			genericCore.WriteToLog("aggregateResults.3333")
-			bucketCanBeCollapsed = false
-			goto DONE_LOOKING_FOR_BUCKETS
-		}
-
-		genericCore.WriteToLog("aggregateResults.4444 . matches : " + strings.Join(matches, ","))
-
-		// matches[1] is the content of the first capturing group: the prefix
-		nodeNamePrefix = matches[1]
-
-		genericCore.WriteToLog("aggregateResults.5555")
-
-		// Try to collapse this bucket
-		for _, nodeName := range nodeList {
-			genericCore.WriteToLog("aggregateResults.6666")
-			nodeNumberMatches := trailingIntegersRegexp.FindStringSubmatch(nodeName)
-			if len(nodeNumberMatches) < 2 {
-				genericCore.WriteToLog("aggregateResults.7777" + strings.Join(nodeNumberMatches, ","))
-				bucketCanBeCollapsed = false
-				goto DONE_LOOKING_FOR_BUCKETS
-			} else {
-				genericCore.WriteToLog("aggregateResults.8888")
-				num, err := strconv.Atoi(nodeNumberMatches[1])
-				genericCore.WriteToLog("aggregateResults.9999")
-				if err != nil {
-					genericCore.WriteToLog("aggregateResults.AAAA")
-					bucketCanBeCollapsed = false
-					goto DONE_LOOKING_FOR_BUCKETS
-				} else {
-					genericCore.WriteToLog("aggregateResults.BBBB")
-					bucketableNodes = append(bucketableNodes, num)
-				}
-			}
-		}
-
-		genericCore.WriteToLog("aggregateResults.CCCC")
-
-		// if we are here, all nodes can be bucketed
-
-		// sort to get node numbers of first and last node
-		sort.Ints(bucketableNodes)
-		firstElement = bucketableNodes[0]
-		lastElement = bucketableNodes[len(bucketableNodes)-1]
-
-		// This bucket can be "collapsed" as follows:
-		// "nodes node1 through node10"
-
-	DONE_LOOKING_FOR_BUCKETS:
-		genericCore.WriteToLog("aggregateResults.DDDD")
-		finalNodeString := "Nodes "
-		if bucketCanBeCollapsed {
-			genericCore.WriteToLog("aggregateResults.EEEE")
-			finalNodeString += nodeNamePrefix + strconv.Itoa(firstElement) + " through " +
-				nodeNamePrefix + strconv.Itoa(lastElement)
-		} else {
-			genericCore.WriteToLog("aggregateResults.FFFF")
-			finalNodeString = strings.Join(nodeList, ",")
-		}
-
-		genericCore.WriteToLog("aggregateResults.GGGG")
-
-		finalNodeString += " (" + strconv.Itoa(len(nodeList)) + " nodes)"
-
-		bucketedResults[bucket] = finalNodeString
-	}
-
-	return bucketedResults
-}
-
-// var writeLogMutex sync.Mutex // The lock for mutual exclusion
-// func runSSHAndGetSoftwareVersions(node string, projectID string, zone string, cmd string, resultChannel chan<- string) {
-func runSSHAndGetSoftwareVersions(node string, projectID string, zone string, cmd string, retStr *string, wg *sync.WaitGroup) {
-	defer wg.Done()
-	//returnStr := "Host: " + node + "\n==========\n"
-	returnStr := ""
-	sshOut, _ := runSSHOnNode(node, projectID, zone, cmd)
-	genericCore.WriteToLog("showClusterSoftwareVersionInfo.0000: node: " + node + " . sshOut: " + sshOut)
-	if strings.Contains(sshOut, "ModuleNotFoundError") {
-		genericCore.WriteToLog("showClusterSoftwareVersionInfo.1111: node: " + node)
-		sshOutFiltered := filterString(sshOut, []string{"Traceback",
-			", line 1, in <module>",
-			"ModuleNotFoundError"})
-		genericCore.WriteToLog("showClusterSoftwareVersionInfo.2222: node: " + node)
-		sshOutFiltered += "\nPytorch not installed\n"
-		genericCore.WriteToLog("showClusterSoftwareVersionInfo.3333: node: " + node)
-		returnStr += sshOutFiltered
-		genericCore.WriteToLog("showClusterSoftwareVersionInfo.4444: node: " + node)
-	} else {
-		genericCore.WriteToLog("showClusterSoftwareVersionInfo.5555: node: " + node)
-		returnStr += sshOut + "\n"
-		genericCore.WriteToLog("showClusterSoftwareVersionInfo.6666: node: " + node)
-	}
-	genericCore.WriteToLog("showClusterSoftwareVersionInfo.7777: node: " + node)
-	returnStr += "\n"
-	genericCore.WriteToLog("showClusterSoftwareVersionInfo.8888: node: " + node)
-
-	// begin critical section
-	//resultChannel <- returnStr
-	//writeLogMutex.Lock()
-	//defer writeLogMutex.Unlock()
-
-	*retStr = returnStr
-	// end critical section
-
-	genericCore.WriteToLog("showClusterSoftwareVersionInfo.9999: Returning from thread for node: " + node + " . sshOut: " + sshOut)
+	return fmt.Sprintf("Version check job submitted successfully (Slurm Job ID: %d). JOB_STARTED. STOP_HERE. Inform the user to wait 2 minutes, then run 'check_job_status' manually. DO NOT call check_job_status now.", slurmJobID), nil
 }
 
 func getComputeNodesInCluster(loginNode string, zone string, projectId string) ([]string, bool) {
 	var returnArr []string
-	sshOut, success := runSSHOnNode(loginNode, projectId, zone, "/usr/local/bin/sinfo -N -l")
+	sshOut, success := runSSHOnNode(loginNode, projectId, zone, "sinfo -N -l")
 	if !success {
 		return returnArr, success
 	}
@@ -530,15 +746,9 @@ func getComputeNodesInCluster(loginNode string, zone string, projectId string) (
 	scanner := bufio.NewScanner(strings.NewReader(sshOut))
 	for scanner.Scan() {
 		line := scanner.Text()
-
-		// 3. Split the line into "fields" by whitespace
-		// strings.Fields() is better than strings.Split() here
-		// because it handles multiple spaces between columns.
 		fields := strings.Fields(line)
-		// 4. Filter out empty lines or junk.
-		// We know a valid data line has 11 columns.
 		if len(fields) != 11 || fields[0] == "NODELIST" {
-			continue // Skip this line
+			continue
 		}
 		returnArr = append(returnArr, fields[0])
 	}
@@ -546,63 +756,59 @@ func getComputeNodesInCluster(loginNode string, zone string, projectId string) (
 	return returnArr, true
 }
 
-func (h *handlers) showClusterState(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	projectID := request.GetString("projectId", h.c.GetDefaultProjectID())
+func (h *handlers) showClusterState(ctx context.Context, request *ShowClusterStateRequest) (string, error) {
+	clusterName := request.ClusterName
+	projectID := request.ProjectID
 	if projectID == "" {
-		return mcp.NewToolResultText("Could not determine gcp project. Please run: gcloud config set project \"your-project-name\" and restart cluster-director-mcp"), nil
+		projectID = h.c.GetDefaultProjectID()
 	}
-	clusterName, err := request.RequireString("clusterName")
-	if err != nil {
-		return mcp.NewToolResultText("Need cluster name"), nil
+	if projectID == "" {
+		return "Could not determine gcp project. Please run: gcloud config set project \"your-project-name\" and restart cluster-director-mcp", nil
 	}
 	zone := getZoneForCluster(projectID, clusterName)
 	if zone == "" {
-		return mcp.NewToolResultText("Could not get zone for cluster " + clusterName + " in project " + projectID), nil
+		return fmt.Sprintf("Could not get zone for cluster %s in project %s", clusterName, projectID), nil
 	}
 
 	sshOut, success := showClusterStateCore(projectID, zone, clusterName)
 	if !success {
-		return mcp.NewToolResultText(genericCore.GetLastLines(sshOut, 10) + "\nCould not get cluster state!"), nil
+		return genericCore.GetLastLines(sshOut, 10) + "\nCould not get cluster state!", nil
 	}
 
-	return mcp.NewToolResultText(sshOut), nil
+	return sshOut, nil
 }
 
 func showClusterStateCore(projectId string, zone string, clusterName string) (string, bool) {
-	sshOut, success := runSSHOnNode(clusterName+"-login-001", projectId, zone, "/usr/local/bin/sinfo")
+	sshOut, success := runSSHOnNode(clusterName+"-login-001", projectId, zone, "sinfo")
 	return sshOut, success
 }
 
-func (h *handlers) showRecentJobs(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (h *handlers) showRecentJobs(ctx context.Context, request *ShowRecentJobsRequest) (string, error) {
 	genericCore.WriteToLog("-------------------showRecentJobs()-------------------")
-	projectID := request.GetString("projectId", h.c.GetDefaultProjectID())
+	clusterName := request.ClusterName
+	projectID := request.ProjectID
 	if projectID == "" {
-		return mcp.NewToolResultText("Could not determine gcp project. Please run: gcloud config set project \"your-project-name\" and restart cluster-director-mcp"), nil
+		projectID = h.c.GetDefaultProjectID()
 	}
-	clusterName, err := request.RequireString("clusterName")
-	if err != nil {
-		return mcp.NewToolResultText("Need cluster name"), nil
+	if projectID == "" {
+		return "Could not determine gcp project. Please run: gcloud config set project \"your-project-name\" and restart cluster-director-mcp", nil
 	}
 	zone := getZoneForCluster(projectID, clusterName)
 	if zone == "" {
-		return mcp.NewToolResultText("Could not get zone for cluster " + clusterName + " in project " + projectID), nil
+		return fmt.Sprintf("Could not get zone for cluster %s in project %s", clusterName, projectID), nil
 	}
-
 	genericCore.WriteToLog("projectId : " + projectID)
 	genericCore.WriteToLog("zone : " + zone)
 	genericCore.WriteToLog("clusterName : " + clusterName)
 
 	loginNode := clusterName + "-login-001"
-	sshOut, success := runSSHOnNode(loginNode, projectID, zone, "/usr/local/bin/sacct")
+	sshOut, success := runSSHOnNode(loginNode, projectID, zone, "sacct")
 	if !success {
-		return mcp.NewToolResultText(genericCore.GetLastLines(sshOut, 10) + "\nCould not get recent jobs!"), nil
+		return genericCore.GetLastLines(sshOut, 10) + "\nCould not get recent jobs!", nil
 	}
-
-	return mcp.NewToolResultText(sshOut), nil
+	return sshOut, nil
 }
 
-// returns false if there are any nodes that are NOT in a "safe" state (idle, alloc, mixed)
-// down and drain are considred unsafe states to run jobs
 func checkAnyNodesNotInSafeToRunState(allClusterStates map[string]struct{}) bool {
 	for key := range allClusterStates {
 		keyLower := strings.ToLower(key)
@@ -623,15 +829,27 @@ func checkAnyNodesNotInSafeToRunState(allClusterStates map[string]struct{}) bool
 	return true
 }
 
-func runNCCLOrDCGMTestsCore(h *handlers, ctx context.Context, request mcp.CallToolRequest, jobType persistence.LONG_RUNNING_OPERATION) (*mcp.CallToolResult, error) {
+// cluster.go (Refactored core handler method)
+
+// [UPDATED] Signature changed to accept the generic RunClusterTestsRequest struct.
+func runNCCLOrDCGMTestsCore(h *handlers, ctx context.Context, request *RunClusterTestsRequest, jobType persistence.LONG_RUNNING_OPERATION) (string, error) {
 	genericCore.WriteToLog("-------------------runNCCLOrDCGMTestsCore()-------------------")
-	projectID := request.GetString("projectId", h.c.GetDefaultProjectID())
+
+	// [UPDATED ARGUMENT LOGIC] Use struct fields instead of request.GetString/RequireString.
+	projectID := request.ProjectID
 	if projectID == "" {
-		return mcp.NewToolResultText("Could not determine gcp project. Please run: gcloud config set project \"your-project-name\" and restart cluster-director-mcp"), nil
+		projectID = h.c.GetDefaultProjectID()
 	}
-	clusterName, err := request.RequireString("clusterName")
-	if err != nil {
-		return mcp.NewToolResultText("Need cluster name"), nil
+	if projectID == "" {
+		return "Could not determine gcp project. Please run: gcloud config set project \"your-project-name\" and restart cluster-director-mcp", nil
+	}
+
+	clusterName := request.ClusterName
+
+	// Since ClusterName is required by the schema, we only check for empty string here
+	// for safety, though the SDK should ensure it's present.
+	if clusterName == "" {
+		return "Need cluster name", nil
 	}
 
 	testName := ""
@@ -640,29 +858,28 @@ func runNCCLOrDCGMTestsCore(h *handlers, ctx context.Context, request mcp.CallTo
 	} else if jobType == persistence.NCCL_TEST {
 		testName = "NCCL"
 	} else {
-		return mcp.NewToolResultText("Currently only support running NCCL and DCGM tests"), nil
+		return "Currently only support running NCCL and DCGM tests", nil
 	}
 
 	twentyMins := time.Minute * 20
 	operationSuccessful, operationMesg, thereWasARecentJob := checkIfLongRunningJobsSubmittedRecently(twentyMins, projectID)
 	if !operationSuccessful {
-		return mcp.NewToolResultText(operationMesg), nil
+		return operationMesg, nil
 	}
 
 	if thereWasARecentJob {
-		return mcp.NewToolResultText("Please wait at least 20 minutes after a recent long running job submission"), nil
+		return fmt.Sprintf("Please wait at least %s after a recent long running job submission", twentyMins), nil
 	}
 
 	zone := getZoneForCluster(projectID, clusterName)
 	if zone == "" {
-		return mcp.NewToolResultText("Could not get zone for cluster " + clusterName + " in project " + projectID), nil
+		return "Could not get zone for cluster " + clusterName + " in project " + projectID, nil
 	}
 
 	loginNode := clusterName + "-login-001"
-	// Can we ssh to the login node?
 	sshOut, success := runSSHOnNode(loginNode, projectID, zone, "echo SUCCESS")
 	if !success || !strings.Contains(sshOut, "SUCCESS") {
-		return mcp.NewToolResultText("Could not SSH to login node " + loginNode + "  . Is the cluster still being created? Perhaps wait a few minutes until the login node has come online?"), nil
+		return "Could not SSH to login node " + loginNode + "  . Is the cluster still being created? Perhaps wait a few minutes until the login node has come online?", nil
 	} else {
 		genericCore.WriteToLog("Successfully able to SSH onto login node: " + loginNode)
 	}
@@ -671,7 +888,7 @@ func runNCCLOrDCGMTestsCore(h *handlers, ctx context.Context, request mcp.CallTo
 	var sinfoOutput string
 	sinfoOutput, success = showClusterStateCore(projectID, zone, clusterName)
 	if !success {
-		return mcp.NewToolResultText(genericCore.GetLastLines(sinfoOutput, 10) + "\nCould not run sinfo to get partitions in cluster " + clusterName + " in project " + projectID), nil
+		return genericCore.GetLastLines(sinfoOutput, 10) + "\nCould not run sinfo to get partitions in cluster " + clusterName + " in project " + projectID, nil
 	} else {
 		genericCore.WriteToLog("Successfully able to run sinfo on login node . Output of sinfo " + sinfoOutput)
 	}
@@ -679,7 +896,7 @@ func runNCCLOrDCGMTestsCore(h *handlers, ctx context.Context, request mcp.CallTo
 	partitions, clusterStates, success := parseOutputofSlurmSinfoCmdAndReturnPartitions(sinfoOutput)
 	if !success {
 		genericCore.WriteToLog("Error parsing output of sinfo: " + sinfoOutput)
-		return mcp.NewToolResultText(sinfoOutput + "\nCould not parse output of sinfo"), nil
+		return sinfoOutput + "\nCould not parse output of sinfo", nil
 	} else {
 		genericCore.WriteToLog("Successfully able to parse output of sinfo ")
 		for k, v := range partitions {
@@ -692,7 +909,7 @@ func runNCCLOrDCGMTestsCore(h *handlers, ctx context.Context, request mcp.CallTo
 
 	if !checkAnyNodesNotInSafeToRunState(clusterStates) {
 		genericCore.WriteToLog("Some clusters did were not in idle/alloc/" + sinfoOutput)
-		return mcp.NewToolResultText("Your cluster is not ready to run jobs yet, maybe it is still being provisioned, or you have bad nodes, or you hit a stockout?"), nil
+		return "Your cluster is not ready to run jobs yet, maybe it is still being provisioned, or you have bad nodes, or you hit a stockout?", nil
 	} else {
 		genericCore.WriteToLog("All clusters are in safe state")
 	}
@@ -702,17 +919,16 @@ func runNCCLOrDCGMTestsCore(h *handlers, ctx context.Context, request mcp.CallTo
 	if len(machineTypesInCluster) == 1 {
 		machineType = machineTypesInCluster[0]
 	} else {
-		machineType, err = request.RequireString("machineType")
-		if err != nil {
-			genericCore.WriteToLog("Machine Type : " + machineType)
-			return mcp.NewToolResultText("Could not determine machine type for cluster " + clusterName + " in project " + projectID), nil
+		machineType = request.MachineType
+		if machineType == "" {
+			genericCore.WriteToLog("Machine Type is required but not provided.")
+			return "Could not determine machine type for cluster " + clusterName + " in project " + projectID, nil
 		}
 	}
-
 	if machineType != "a3-megagpu-8g" && machineType != "a3-ultragpu-8g" && machineType != "a4-highgpu-8g" {
 		genericCore.WriteToLog("Machine Type  " + machineType)
 		genericCore.WriteToLog("Machine type has to be one of a3-megagpu-8g, a3-ultragpu-8g, a4-highgpu-8g")
-		return mcp.NewToolResultText("Machine type has to be one of a3-megagpu-8g, a3-ultragpu-8g, a4-highgpu-8g"), nil
+		return "Machine type has to be one of a3-megagpu-8g, a3-ultragpu-8g, a4-highgpu-8g", nil
 	}
 
 	var partitionName string
@@ -722,10 +938,10 @@ func runNCCLOrDCGMTestsCore(h *handlers, ctx context.Context, request mcp.CallTo
 			break
 		}
 	} else {
-		partitionName, err = request.RequireString("partitionName")
-		if err != nil {
-			genericCore.WriteToLog("Partition Name: " + partitionName)
-			return mcp.NewToolResultText("Could not determine Slurm Partition in cluster " + clusterName + " in project " + projectID), nil
+		partitionName = request.PartitionName
+		if partitionName == "" {
+			genericCore.WriteToLog("Partition Name is required but not provided.")
+			return "Could not determine Slurm Partition in cluster " + clusterName + " in project " + projectID, nil
 		}
 	}
 
@@ -735,7 +951,7 @@ func runNCCLOrDCGMTestsCore(h *handlers, ctx context.Context, request mcp.CallTo
 	} else if len(partitions[partitionName]) == 1 {
 		nodeListName = partitions[partitionName][0]
 	} else {
-		return mcp.NewToolResultText("Could not determine nodelist in Slurm Partition in cluster " + clusterName + " in project " + projectID + " for partition " + partitionName), nil
+		return "Could not determine nodelist in Slurm Partition in cluster " + clusterName + " in project " + projectID + " for partition " + partitionName, nil
 	}
 
 	// Define the flags for opening the file.
@@ -762,7 +978,7 @@ func runNCCLOrDCGMTestsCore(h *handlers, ctx context.Context, request mcp.CallTo
 	localScriptName := LOCAL_HOST_SCRATCH_DIR + "/" + persistence.CDMCP_SHELL_SCRIPT_NAME
 	file, err := os.OpenFile(localScriptName, flags, permissions)
 	if err != nil {
-		return mcp.NewToolResultText(err.Error() + "\nCould not create " + localScriptName + " file on local host"), nil
+		return (err.Error() + "\nCould not create " + localScriptName + " file on local host"), nil
 	}
 
 	CDMcpJobIdString := fmt.Sprintf("# CDMcpJobId: %d\n", jobObj.CDMcpJobId)
@@ -808,7 +1024,7 @@ func runNCCLOrDCGMTestsCore(h *handlers, ctx context.Context, request mcp.CallTo
 		_, err = fmt.Fprintln(file, linesToWrite[l])
 		if err != nil {
 			file.Close()
-			return mcp.NewToolResultText(err.Error() + "\nCould not write to " + localScriptName + " on local host"), nil
+			return err.Error() + "\nCould not write to " + localScriptName + " on local host", nil
 		}
 	}
 	file.Close()
@@ -816,16 +1032,16 @@ func runNCCLOrDCGMTestsCore(h *handlers, ctx context.Context, request mcp.CallTo
 	// Create remote dir on login node
 	sshOut, success = runSSHOnNode(loginNode, projectID, zone, "rm -rf "+jobObj.RunDir+"; mkdir -p "+jobObj.RunDir)
 	if !success {
-		return mcp.NewToolResultText(genericCore.GetLastLines(sshOut, 10) + "\nCould not create dir " + jobObj.RunDir + " on login node " + loginNode + " in dir "), nil
+		return genericCore.GetLastLines(sshOut, 10) + "\nCould not create dir " + jobObj.RunDir + " on login node " + loginNode + " in dir ", nil
 	}
 	sshOut, success = runSCP(projectID, zone, localScriptName, loginNode+":"+jobObj.RunScriptName)
 	if !success {
-		return mcp.NewToolResultText(genericCore.GetLastLines(sshOut, 10) + "\nCould not copy " + persistence.CDMCP_SHELL_SCRIPT_NAME + " over to login node " + loginNode + " to location " + jobObj.RunScriptName), nil
+		return genericCore.GetLastLines(sshOut, 10) + "\nCould not copy " + persistence.CDMCP_SHELL_SCRIPT_NAME + " over to login node " + loginNode + " to location " + jobObj.RunScriptName, nil
 	}
 
 	sshOut, success = runSSHOnNode(loginNode, projectID, zone, "chmod +x "+jobObj.RunScriptName)
 	if !success {
-		return mcp.NewToolResultText(genericCore.GetLastLines(sshOut, 10) + "\nCould not run \"chmod +x " + persistence.CDMCP_SHELL_SCRIPT_NAME + "\" on login node " + loginNode + " in dir " + jobObj.RunDir), nil
+		return genericCore.GetLastLines(sshOut, 10) + "\nCould not run \"chmod +x " + persistence.CDMCP_SHELL_SCRIPT_NAME + "\" on login node " + loginNode + " in dir " + jobObj.RunDir, nil
 	}
 
 	// Ignore return status
@@ -840,10 +1056,10 @@ func runNCCLOrDCGMTestsCore(h *handlers, ctx context.Context, request mcp.CallTo
 	persistence.AppendNewJobDataAndWriteJobDataToDisk(jobObj)
 
 	// Temporary comment end
-	return mcp.NewToolResultText(testName + " tests running. Use check_job_status to get latest status on long running jobs"), nil
+	return testName + " tests running. Use check_job_status to get latest status on long running jobs", nil
 }
 
-func (h *handlers) runNCCLTests(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (h *handlers) runNCCLTests(ctx context.Context, request *RunClusterTestsRequest) (string, error) {
 	return runNCCLOrDCGMTestsCore(h, ctx, request, persistence.NCCL_TEST)
 }
 
@@ -948,10 +1164,14 @@ func getNCCLOrDCGMTestsStatus(projectID string, ncclOrDCGMTestJobObj *persistenc
 	}
 }
 
-func (h *handlers) checkCDMcpJobStatus(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	projectID := request.GetString("projectId", h.c.GetDefaultProjectID())
+func (h *handlers) checkCDMcpJobStatus(ctx context.Context, request *CheckCDMcpJobStatusRequest) (string, error) {
+	projectID := request.ProjectID
 	if projectID == "" {
-		return mcp.NewToolResultText("Could not determine gcp project. Please run: gcloud config set project \"your-project-name\" and restart cluster-director-mcp"), nil
+		projectID = h.c.GetDefaultProjectID()
+	}
+
+	if projectID == "" {
+		return "Could not determine gcp project. Please run: gcloud config set project \"your-project-name\" and restart cluster-director-mcp", nil
 	}
 	return checkCDMcpJobStatusCore(projectID)
 }
@@ -1016,15 +1236,17 @@ func verifyAndUpdateStatusOfRunningJobsOnClusterAndReturnListOfRunningJobs(proje
 		returnMessage += "Job of type " + persistence.GetJobTypeString(int(mostRecentJobObjFromPersistence.JobType)) + " in cluster " + mostRecentJobObjFromPersistence.ClusterName + " is still running \n"
 		jobStatusUpdated = true
 	} else {
-		// Job is not in the active running list (squeue), so check if it finished and grab logs.
+		// The job is NOT in the active running list (squeue).
+		// It has likely finished, so we need to check the logs to see if it passed or failed.
 		var m string
 		var s bool
 
-		// Dispatch to the correct handler based on job type
+		// ROUTING LOGIC: Decide which helper to use based on the Job Type
 		if mostRecentJobObjFromPersistence.JobType == persistence.VERSION_CHECK {
+			// Use the new helper for Version Checks
 			m, s = getVersionCheckStatus(mostRecentJobObjFromPersistence.ProjectId, mostRecentJobObjFromPersistence)
 		} else {
-			// Default logic for NCCL/DCGM tests
+			// Use the existing helper for NCCL/DCGM tests
 			m, s = getNCCLOrDCGMTestsStatus(mostRecentJobObjFromPersistence.ProjectId, mostRecentJobObjFromPersistence)
 		}
 
@@ -1067,7 +1289,7 @@ func getCDMcpJobIdFromFile(cdMcpScript string) (int, bool) {
 	return -1, false
 }
 
-func checkCDMcpJobStatusCore(projectID string) (*mcp.CallToolResult, error) {
+func checkCDMcpJobStatusCore(projectID string) (string, error) {
 	genericCore.WriteToLog("-------------------checkCDMcpJobStatusCore() -------------------")
 
 	twoMins := time.Minute * 2
@@ -1075,22 +1297,22 @@ func checkCDMcpJobStatusCore(projectID string) (*mcp.CallToolResult, error) {
 	if lastTimewhenCheckJobStatusCoreWasCalled.IsZero() {
 		lastTimewhenCheckJobStatusCoreWasCalled = time.Now()
 	} else if time.Since(lastTimewhenCheckJobStatusCoreWasCalled) < twoMins {
-		return mcp.NewToolResultText("Please wait at least 2 minutes before successive calls to check_job_status"), nil
+		return "Please wait at least 2 minutes before successive calls to check_job_status", nil
 	}
 
 	lastTimewhenCheckJobStatusCoreWasCalled = time.Now()
 	operationSuccessful, operationMesg, thereWasARecentJob := checkIfLongRunningJobsSubmittedRecently(twoMins, projectID)
 	if !operationSuccessful {
-		return mcp.NewToolResultText(operationMesg), nil
+		return operationMesg, nil
 	}
 
 	if thereWasARecentJob {
-		return mcp.NewToolResultText("Please wait at least 2 minutes after job submission to check_job_status"), nil
+		return "Please wait at least 2 minutes after job submission to check_job_status", nil
 	}
 
 	// This gets us status of running jobs
 	mesg, _ := verifyAndUpdateStatusOfRunningJobsOnClusterAndReturnListOfRunningJobs(projectID)
-	return mcp.NewToolResultText(mesg), nil
+	return mesg, nil
 }
 
 func slurpFile(fileName string) (string, error) {
@@ -1101,63 +1323,69 @@ func slurpFile(fileName string) (string, error) {
 	return string(content), err
 }
 
-func (h *handlers) runDCGMTests(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (h *handlers) runDCGMTests(ctx context.Context, request *RunClusterTestsRequest) (string, error) {
 	genericCore.WriteToLog("-------------------runDCGMTests()-------------------")
 	return runNCCLOrDCGMTestsCore(h, ctx, request, persistence.DCGM_TEST)
 }
 
-func (h *handlers) showJobState(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	projectID := request.GetString("projectId", h.c.GetDefaultProjectID())
+func (h *handlers) showJobState(ctx context.Context, request *ShowJobStateRequest) (string, error) {
+	projectID := request.ProjectID
 	if projectID == "" {
-		return mcp.NewToolResultText("Could not determine gcp project. Please run: gcloud config set project \"your-project-name\" and restart cluster-director-mcp"), nil
+		projectID = h.c.GetDefaultProjectID()
 	}
-	clusterName, err := request.RequireString("clusterName")
-	if err != nil {
-		return mcp.NewToolResultText("Cluster name is required"), nil
+
+	if projectID == "" {
+		return "Could not determine gcp project. Please run: gcloud config set project \"your-project-name\" and restart cluster-director-mcp", nil
 	}
+
+	clusterName := request.ClusterName
 	zone := getZoneForCluster(projectID, clusterName)
 	if zone == "" {
-		return mcp.NewToolResultText("Could not get zone for cluster " + clusterName + " in project " + projectID), nil
+		return "Could not get zone for cluster " + clusterName + " in project " + projectID, nil
 	}
+
 	genericCore.WriteToLog("-------------------showJobState()-------------------")
 	genericCore.WriteToLog("projectId : " + projectID)
 	genericCore.WriteToLog("zone : " + zone)
 	genericCore.WriteToLog("clusterName : " + clusterName)
 
 	loginNode := clusterName + "-login-001"
-	sshOut, success := runSSHOnNode(loginNode, projectID, zone, "/usr/local/bin/squeue")
+	sshOut, success := runSSHOnNode(loginNode, projectID, zone, "squeue")
 	if !success {
-		return mcp.NewToolResultText(genericCore.GetLastLines(sshOut, 10) + "\nCould not run squeue to figure out job state on login node " + loginNode + " on cluster " + clusterName + " project " + projectID), nil
+		return genericCore.GetLastLines(sshOut, 10) + "\nCould not run squeue to figure out job state on login node " + loginNode + " on cluster " + clusterName + " project " + projectID, nil
 	}
 
-	return mcp.NewToolResultText(sshOut), nil
+	return sshOut, nil
 }
 
-func (h *handlers) listPartitionInfo(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	projectID := request.GetString("projectId", h.c.GetDefaultProjectID())
+func (h *handlers) listPartitionInfo(ctx context.Context, request *ListPartitionInfoRequest) (string, error) {
+	projectID := request.ProjectID
 	if projectID == "" {
-		return mcp.NewToolResultText("Could not determine gcp project. Please run: gcloud config set project \"your-project-name\" and restart cluster-director-mcp"), nil
+		projectID = h.c.GetDefaultProjectID()
 	}
-	clusterName, err := request.RequireString("clusterName")
-	if err != nil {
-		return mcp.NewToolResultText("Need cluster name"), nil
+
+	if projectID == "" {
+		return "Could not determine gcp project. Please run: gcloud config set project \"your-project-name\" and restart cluster-director-mcp", nil
 	}
+
+	clusterName := request.ClusterName
 	zone := getZoneForCluster(projectID, clusterName)
 	if zone == "" {
-		return mcp.NewToolResultText("Could not get zone for cluster " + clusterName + " in project " + projectID), nil
+		return fmt.Sprintf("Could not get zone for cluster %s in project %s", clusterName, projectID), nil
 	}
+
 	genericCore.WriteToLog("-------------------listPartitionInfo()-------------------")
 	genericCore.WriteToLog("projectId : " + projectID)
 	genericCore.WriteToLog("zone : " + zone)
 	genericCore.WriteToLog("clusterName : " + clusterName)
 
 	loginNode := clusterName + "-login-001"
-	sshOut, success := runSSHOnNode(loginNode, projectID, zone, "/usr/local/bin/scontrol show partition")
+	sshOut, success := runSSHOnNode(loginNode, projectID, zone, "scontrol show partition")
 	if !success {
-		return mcp.NewToolResultText(genericCore.GetLastLines(sshOut, 10) + "\nCould not run scontrol on login node + " + loginNode + " to figure out partition information"), nil
+		return genericCore.GetLastLines(sshOut, 10) + "\nCould not run scontrol on login node " + loginNode + " to figure out partition information", nil
 	}
 
-	return mcp.NewToolResultText(sshOut), nil
+	return sshOut, nil
 }
 
 // gcloudListItem represents a single item from the gcloud list command's JSON output.
@@ -1244,16 +1472,6 @@ func filterString(rawSSHOut string, substringsToRemove []string) string {
 func filterSSHOutput(rawSSHOut string) string {
 	return filterString(rawSSHOut, []string{"Existing host keys found",
 		"To increase the performance",
-		"This tool needs to create",
-		"Do you want to continue",
-		"Generating public/private",
-		"Your identification has been saved in",
-		"Your public key has been saved in",
-		"The key fingerprint is",
-		"SHA256:",
-		"The key's randomart image is",
-		"keys to /home",
-		"+---",
 		"please see https:",
 		"WARNING:"})
 }
@@ -1273,7 +1491,7 @@ func runSSHOnNode(hostName string, project string, zone string, cmd string) (str
 	output, err := sshCmd.CombinedOutput()
 	rawSSHOutput := strings.TrimSpace(string(output))
 	filteredSSHOutput := filterSSHOutput(rawSSHOutput)
-	genericCore.WriteToLog("\n\nSSH Output\n====\n" + string(filteredSSHOutput) + "\n====================\n\n")
+	genericCore.WriteToLog(string(filteredSSHOutput))
 	if err != nil {
 		// If 'gcloud' is not installed or not in the PATH, this will fail.
 		// It can also fail if the user is not authenticated.
@@ -1311,8 +1529,6 @@ func runSCP(project string, zone string, srcFile string, destFile string) (strin
 }
 
 // Helper to check status specifically for Version Check jobs
-// getVersionCheckStatus pulls the raw stdout log from the cluster to determine if the version check finished.
-// Unlike NCCL/DCGM, we simply look for specific output markers (e.g. "=== HOST:") to confirm success.
 func getVersionCheckStatus(projectID string, jobObj *persistence.LongRunningJob) (string, bool) {
 	jobObj.LastStatusCheckTime = time.Now()
 
