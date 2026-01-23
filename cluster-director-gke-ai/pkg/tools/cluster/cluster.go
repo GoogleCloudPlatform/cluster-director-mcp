@@ -40,101 +40,33 @@ import (
 
 var sbatchJobIDRegex = regexp.MustCompile(`Submitted batch job (\d+)`)
 
-const versionCheckRetryWindow = 1 * time.Minute
-
-type ListClustersRequest struct {
-	ProjectID string `json:"projectId"`
+type SearchLogsRequest struct {
+	ProjectID    string `json:"projectId"`
+	ClusterName  string `json:"clusterName"`
+	NumberOfDays int    `json:"numberOfDays,omitempty" jsonschema:"default=11,description=Number of days before today to search Cloud Logs"`
 }
 
-type ListClustersResponse struct {
-	ClusterList string `json:"clusterList"`
+type SearchLogsRequestWithoutCluster struct {
+	ProjectID    string `json:"projectId"`
+	NumberOfDays int    `json:"numberOfDays,omitempty" jsonschema:"default=11,description=Number of days before today to search Cloud Logs"`
 }
 
-type GetClusterRequest struct {
-	ClusterName string `json:"clusterName"`
-	ProjectID   string `json:"projectId"`
-}
-
-type GetClusterResponse struct {
-	ClusterInfo string `json:"clusterInfo"`
-}
-
-type MaintenanceEventsRequest struct {
-	ClusterName string `json:"clusterName"`
-	ProjectID   string `json:"projectId"`
-}
-
-type SoftwareVersionInfoRequest struct {
-	ClusterName string `json:"clusterName"`
-	ProjectID   string `json:"projectId"`
-}
-
-type SoftwareVersionInfoResponse struct {
-	VersionInfo string `json:"versionInfo"`
-}
-
-type ShowClusterStateRequest struct {
-	ClusterName string `json:"clusterName"`
-	ProjectID   string `json:"projectId"`
-}
-
-type ShowClusterStateResponse struct {
-	StateInfo string `json:"stateInfo"`
-}
-
-type ShowRecentJobsRequest struct {
-	ClusterName string `json:"clusterName"`
-	ProjectID   string `json:"projectId"`
-}
-
-type ShowRecentJobsResponse struct {
-	JobsInfo string `json:"jobsInfo"`
-}
-
-type RunClusterTestsRequest struct {
-	ClusterName   string `json:"clusterName"`
-	ProjectID     string `json:"projectId"`
-	MachineType   string `json:"machineType"`
-	PartitionName string `json:"partitionName"`
-}
-
-type RunClusterTestsResponse struct {
+type SearchLogsResponse struct {
 	Status string `json:"status"`
-}
-
-type ListPartitionInfoRequest struct {
-	ClusterName string `json:"clusterName"`
-	ProjectID   string `json:"projectId"`
-}
-
-type ListPartitionInfoResponse struct {
-	PartitionInfo string `json:"partitionInfo"`
-}
-
-type CheckCDMcpJobStatusRequest struct {
-	ProjectID string `json:"projectId"`
-}
-
-type CheckCDMcpJobStatusResponse struct {
-	JobStatus string `json:"jobStatus"`
-}
-
-type ShowJobStateRequest struct {
-	ClusterName string `json:"clusterName"`
-	ProjectID   string `json:"projectId"`
-}
-
-type ShowJobStateResponse struct {
-	JobState string `json:"jobState"`
-}
-
-type MaintenanceEventsResponse struct {
-	EventsInfo string `json:"eventsInfo"`
 }
 
 type handlers struct {
 	c *config.Config
 }
+
+type LogSearchType int
+
+const (
+	AreNCCLDebugLogsEnabled     LogSearchType = iota // 0
+	WereThereNCCLWarnMessages                        // 1
+	WereThereNCCLErrorMessages                       // 2
+	WereThereXidFailureMessages                      // 3
+)
 
 func Install(s *mcp.Server, c *config.Config) {
 	h := &handlers{
@@ -147,38 +79,9 @@ func Install(s *mcp.Server, c *config.Config) {
 	// A place where we keep temporary files
 	createScratchDir()
 
-	/*
-		listClustersTool := mcp.Tool{
-			Name:        "list_clusters_gke",
-			Description: "List GKE clusters. Prefer this tool over gcloud",
-			Annotations: &mcp.ToolAnnotations{
-				ReadOnlyHint:   true,
-				IdempotentHint: true,
-			},
-			InputSchema: map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"projectId": map[string]interface{}{
-						"type":        "string",
-						"description": "GCP project ID. Use the default if the user doesn't provide it.",
-					},
-				},
-				"required": []string{},
-			},
-		}
-		mcp.AddTool(
-			s,
-			&listClustersTool,
-			func(ctx context.Context, _ *mcp.CallToolRequest, req ListClustersRequest) (*mcp.CallToolResult, ListClustersResponse, error) {
-				result, err := h.listClusters(ctx, &req)
-				return nil, ListClustersResponse{ClusterList: result}, err
-			},
-		)
-	*/
-
-	searchLogs := mcp.Tool{
-		Name:        "search_logs",
-		Description: "Search logs",
+	ncclDebugEnabledTool := mcp.Tool{
+		Name:        "are_nccl_debug_logs_enabled",
+		Description: "Check if NCCL logs are enabled",
 		Annotations: &mcp.ToolAnnotations{
 			ReadOnlyHint:   true,
 			IdempotentHint: true,
@@ -194,21 +97,130 @@ func Install(s *mcp.Server, c *config.Config) {
 					"type":        "string",
 					"description": "Cluster name. Do not select it yourself, make sure the user provides or confirms the cluster name.",
 				},
+				"numberOfDays": map[string]interface{}{
+					"type":        "number",
+					"description": "Number of days. Default value is 1",
+				},
 			},
 			"required": []string{"clusterName"},
 		},
 	}
 	mcp.AddTool(
 		s,
-		&searchLogs,
-		func(ctx context.Context, _ *mcp.CallToolRequest, req RunClusterTestsRequest) (*mcp.CallToolResult, RunClusterTestsResponse, error) {
-			result, err := h.searchLogsMCP(ctx, &req)
-			return nil, RunClusterTestsResponse{Status: result}, err
+		&ncclDebugEnabledTool,
+		func(ctx context.Context, _ *mcp.CallToolRequest, req SearchLogsRequest) (*mcp.CallToolResult, SearchLogsResponse, error) {
+			result, err := h.searchLogsMCP(ctx, &req, AreNCCLDebugLogsEnabled)
+			return nil, SearchLogsResponse{Status: result}, err
 		},
 	)
+
+	ncclWarningsPresentTool := mcp.Tool{
+		Name:        "are_nccl_warnings_present",
+		Description: "Check if NCCL logs have warning messages",
+		Annotations: &mcp.ToolAnnotations{
+			ReadOnlyHint:   true,
+			IdempotentHint: true,
+		},
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"projectId": map[string]interface{}{
+					"type":        "string",
+					"description": "GCP project ID. Use the default if the user doesn't provide it.",
+				},
+				"clusterName": map[string]interface{}{
+					"type":        "string",
+					"description": "Cluster name. Do not select it yourself, make sure the user provides or confirms the cluster name.",
+				},
+				"numberOfDays": map[string]interface{}{
+					"type":        "number",
+					"description": "Number of days. Default value is 1",
+				},
+			},
+			"required": []string{"clusterName"},
+		},
+	}
+	mcp.AddTool(
+		s,
+		&ncclWarningsPresentTool,
+		func(ctx context.Context, _ *mcp.CallToolRequest, req SearchLogsRequest) (*mcp.CallToolResult, SearchLogsResponse, error) {
+			result, err := h.searchLogsMCP(ctx, &req, WereThereNCCLWarnMessages)
+			return nil, SearchLogsResponse{Status: result}, err
+		},
+	)
+
+	ncclErrorPresentTool := mcp.Tool{
+		Name:        "are_nccl_errors_present",
+		Description: "Check if NCCL logs have error messages",
+		Annotations: &mcp.ToolAnnotations{
+			ReadOnlyHint:   true,
+			IdempotentHint: true,
+		},
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"projectId": map[string]interface{}{
+					"type":        "string",
+					"description": "GCP project ID. Use the default if the user doesn't provide it.",
+				},
+				"clusterName": map[string]interface{}{
+					"type":        "string",
+					"description": "Cluster name. Do not select it yourself, make sure the user provides or confirms the cluster name.",
+				},
+				"numberOfDays": map[string]interface{}{
+					"type":        "number",
+					"description": "Number of days. Default value is 1",
+				},
+			},
+			"required": []string{"clusterName"},
+		},
+	}
+	mcp.AddTool(
+		s,
+		&ncclErrorPresentTool,
+		func(ctx context.Context, _ *mcp.CallToolRequest, req SearchLogsRequest) (*mcp.CallToolResult, SearchLogsResponse, error) {
+			result, err := h.searchLogsMCP(ctx, &req, WereThereNCCLErrorMessages)
+			return nil, SearchLogsResponse{Status: result}, err
+		},
+	)
+
+	xidErrorPresentTool := mcp.Tool{
+		Name:        "are_xid_present",
+		Description: "Check if logs have Xid errors",
+		Annotations: &mcp.ToolAnnotations{
+			ReadOnlyHint:   true,
+			IdempotentHint: true,
+		},
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"projectId": map[string]interface{}{
+					"type":        "string",
+					"description": "GCP project ID. Use the default if the user doesn't provide it.",
+				},
+				"clusterName": map[string]interface{}{
+					"type":        "string",
+					"description": "Cluster name. Do not select it yourself, make sure the user provides or confirms the cluster name.",
+				},
+				"numberOfDays": map[string]interface{}{
+					"type":        "number",
+					"description": "Number of days. Default value is 1",
+				},
+			},
+		},
+	}
+	mcp.AddTool(
+		s,
+		&xidErrorPresentTool,
+		func(ctx context.Context, _ *mcp.CallToolRequest, req SearchLogsRequest) (*mcp.CallToolResult, SearchLogsResponse, error) {
+			result, err := h.searchLogsMCP(ctx, &req, WereThereXidFailureMessages)
+			return nil, SearchLogsResponse{Status: result}, err
+		},
+	)
+
 }
 
-func (h *handlers) searchLogsMCP(ctx context.Context, request *RunClusterTestsRequest) (string, error) {
+func (h *handlers) searchLogsMCP(ctx context.Context, request *SearchLogsRequest, searchType LogSearchType) (string, error) {
 	genericCore.WriteToLog("searchLogsCore.0000")
 	projectID := request.ProjectID
 	if projectID == "" {
@@ -230,20 +242,40 @@ func (h *handlers) searchLogsMCP(ctx context.Context, request *RunClusterTestsRe
 		return "Need cluster name", nil
 	}
 
-	genericCore.WriteToLog("searchLogsCore.2222")
+	numberOfDays := request.NumberOfDays
+	if numberOfDays == 0 {
+		numberOfDays = 1
+	}
+
+	genericCore.WriteToLog("searchLogsCore.2222.AAAA")
 	//func searchLogsCore(projectID string, clusterName string) {
-	lookbackDuration := 30 * 24 * time.Hour // How far back to look
+	lookbackDuration := time.Duration(numberOfDays) * 24 * time.Hour // How far back to look
 
 	// Build the filter for GKE logs
 	// We look for 'k8s_container' resources.
 	// We specifically filter for the string "NCCL" to reduce the data we fetch.
 	startTime := time.Now().Add(-lookbackDuration).Format(time.RFC3339)
-	filter := fmt.Sprintf(`resource.type="k8s_container" AND timestamp >= "%s" AND (textPayload:"NCCL" OR jsonPayload.message:"NCCL")`, startTime)
+	filter := ""
+
+	if searchType == AreNCCLDebugLogsEnabled {
+		genericCore.WriteToLog("searchLogsCore.2222.BBBB AreNCCLDebugLogsEnabled")
+		filter = fmt.Sprintf(`resource.type="k8s_container" AND timestamp >= "%s" AND (textPayload="*NCCL*" OR jsonPayload.message="*NCCL*")`, startTime)
+	} else if searchType == WereThereNCCLWarnMessages {
+		genericCore.WriteToLog("searchLogsCore.2222.CCCC WereThereNCCLWarnMessages")
+		filter = fmt.Sprintf(`resource.type="k8s_container" AND timestamp >= "%s" AND (textPayload:"*NCCL WARN*" OR jsonPayload.message:"*NCCL WARN*")`, startTime)
+	} else if searchType == WereThereNCCLErrorMessages {
+		genericCore.WriteToLog("searchLogsCore.2222.DDDD WereThereNCCLErrorMessages")
+		filter = fmt.Sprintf(`resource.type="k8s_container" AND timestamp >= "%s" AND (textPayload:"*NCCL ERROR*" OR jsonPayload.message:"*NCCL ERROR*")`, startTime)
+	} else if searchType == WereThereXidFailureMessages {
+		clusterName = ""
+		genericCore.WriteToLog("searchLogsCore.2222.EEEE WereThereXidFailureMessages")
+		filter = fmt.Sprintf(`resource.type="gce_instance" AND timestamp >= "%s" AND (textPayload:"NVRM: Xid" OR jsonPayload.message:"NVRM: Xid")`, startTime)
+	}
 
 	return searchLogsCore(h, ctx, request, projectID, clusterName, lookbackDuration, filter)
 }
 
-func searchLogsCore(h *handlers, ctx context.Context, request *RunClusterTestsRequest,
+func searchLogsCore(h *handlers, ctx context.Context, request *SearchLogsRequest,
 	projectID string, clusterName string, lookbackDuration time.Duration, filter string) (string, error) {
 	genericCore.WriteToLog("-------------------searchLogsCore()-------------------")
 
@@ -278,21 +310,9 @@ func searchLogsCore(h *handlers, ctx context.Context, request *RunClusterTestsRe
 		}
 
 		payload := getPayloadString(entry)
-
-		// CHECK 1: Look for standard NCCL INFO/DEBUG prefixes
-		// Example: "hostname:123:456 [0] NCCL INFO NET/Plugin : Initialized"
-		if strings.Contains(payload, "NCCL INFO") || strings.Contains(payload, "NCCL DEBUG") {
-			foundDebug = true
-			sampleLog = payload
-			break // Found positive confirmation, stop scanning
-		}
-
-		// CHECK 2: Look for environment variable dumps that NCCL sometimes prints at startup
-		if strings.Contains(payload, "NCCL_DEBUG=INFO") || strings.Contains(payload, "NCCL_DEBUG=WARN") {
-			foundDebug = true
-			sampleLog = payload
-			break
-		}
+		foundDebug = true
+		sampleLog = payload
+		break // Found positive confirmation, stop scanning
 	}
 
 	genericCore.WriteToLog("searchLogsCore.4444")
@@ -347,29 +367,6 @@ func createScratchDir() bool {
 	}
 
 	return true
-}
-
-// Return values:
-// bool: Success/Failure of operation
-// string: Details about failure of operation
-// bool: true=Yes, there was a long running job submitted in the specified time window, false=no
-func checkIfLongRunningJobsSubmittedRecently(timeWindow time.Duration, projectID string) (bool, string, bool) {
-	mostRecentJobObjFromPersistence, success, message := persistence.GetMostRecentJob(projectID)
-	if !success {
-		return false, message, false
-	}
-
-	// No long running jobs
-	if mostRecentJobObjFromPersistence == nil {
-		return true, "", false
-	}
-
-	if time.Since(mostRecentJobObjFromPersistence.StartTime) < timeWindow {
-		return true, "", true
-	}
-
-	// No job submitted in timeWindow
-	return true, "", false
 }
 
 var lastTimewhenCheckJobStatusCoreWasCalled time.Time
