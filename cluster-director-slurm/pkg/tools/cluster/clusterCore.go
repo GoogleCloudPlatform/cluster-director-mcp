@@ -201,7 +201,6 @@ func getAllZonesInRegion(region string, projectID string, ctx context.Context, c
 	// The 'Do' method handles pagination for you. We process each page of results.
 	if err := req1.Pages(ctx, func(page *compute.ZoneList) error {
 		for _, zone := range page.Items {
-			genericCore.WriteToLog(zone.Name)
 			zonesList = append(zonesList, zone.Name)
 		}
 		return nil
@@ -256,7 +255,6 @@ func getAllRegionsAndZonesSupportedByHCS(projectID string) bool {
 	}
 	// Now you can access the data through the struct
 	for _, loc := range locationData.Locations {
-		genericCore.WriteToLog("Region: " + loc.LocationID)
 		regions2Zones[loc.LocationID] = getAllZonesInRegion(loc.LocationID, projectID, ctx, computeService)
 	}
 

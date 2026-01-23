@@ -16,12 +16,14 @@ package genericCore
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -35,26 +37,27 @@ func WriteToLog(message string) {
 	if logger == nil {
 		f := CreateUniqueFilePath("logs/log.cluster-director-mcp")
 
-		// Configure handler options
 		opts := &slog.HandlerOptions{
 			AddSource: true,           // Include file and line number
 			Level:     slog.LevelInfo, // Default level
 		}
 
-		// If file creation succeeded, write to file. Otherwise, write to stdout.
 		if f != nil {
 			logger = slog.New(slog.NewTextHandler(f, opts))
 		} else {
 			logger = slog.New(slog.NewTextHandler(os.Stdout, opts))
 		}
 
-		// Set this as the default logger for the application
 		slog.SetDefault(logger)
 	}
 
-	// Log the message.
-	// slog automatically adds "time", "level", and "source" attributes.
-	logger.Info(message)
+	var pcs [1]uintptr
+	runtime.Callers(2, pcs[:])
+
+	r := slog.NewRecord(time.Now(), slog.LevelInfo, message, pcs[0])
+
+	_ = logger.Handler().Handle(context.Background(), r)
+
 }
 
 // getLastLines scans the string and keeps a rolling slice of the last n lines.
