@@ -23,29 +23,31 @@ import (
 	"golang.org/x/net/html"
 )
 
-func scrapeURL(url string, tableHeaderToSearch string) (string, bool) {
+func ScrapeURL(url string, tableHeaderToSearch string) ([][]string, string, bool) {
+	var tableStrings [][]string
+
 	// 1. Fetch the page
 	resp, err := http.Get(url)
 	if err != nil {
-		return fmt.Sprintf("Could not fetch URL: %v", err), false
+		return tableStrings, fmt.Sprintf("Could not fetch URL: %v", err), false
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		return fmt.Sprintf("Could not fetch url, Status code error: %d %s", resp.StatusCode, resp.Status), false
+		return tableStrings, fmt.Sprintf("Could not fetch url, Status code error: %d %s", resp.StatusCode, resp.Status), false
 	}
 
 	// 2. Parse HTML
 	doc, err := html.Parse(resp.Body)
 	if err != nil {
-		return fmt.Sprintf("Could not to parse HTML from URL: %v", err), false
+		return tableStrings, fmt.Sprintf("Could not to parse HTML from URL: %v", err), false
 	}
 
 	// 3. Find the correct table
 	//tableNode := findTableByHeader(doc, "Mnemonic")
 	tableNode := findTableByHeader(doc, tableHeaderToSearch)
 	if tableNode == nil {
-		return fmt.Sprintf("Could not find table with header %s", tableHeaderToSearch), false
+		return tableStrings, fmt.Sprintf("Could not find table with header %s", tableHeaderToSearch), false
 	}
 
 	// Write to strings builder
@@ -54,9 +56,9 @@ func scrapeURL(url string, tableHeaderToSearch string) (string, bool) {
 	defer writer.Flush()
 
 	// 5. Parse and print the table data
-	processTable(tableNode, writer)
+	tableStrings = processTable(tableNode, writer)
 
-	return sb.String(), true
+	return tableStrings, sb.String(), true
 }
 
 // findTableByHeader walks the tree to find a <table> that contains a specific header text
@@ -101,7 +103,9 @@ func tableHasHeader(table *html.Node, targetText string) bool {
 }
 
 // processTable extracts rows and writes them to CSV
-func processTable(table *html.Node, writer *csv.Writer) {
+func processTable(table *html.Node, writer *csv.Writer) [][]string {
+
+	var returnArray [][]string
 	var walk func(*html.Node)
 	walk = func(n *html.Node) {
 		if n.Type == html.ElementNode && n.Data == "tr" {
@@ -116,6 +120,7 @@ func processTable(table *html.Node, writer *csv.Writer) {
 			}
 			if len(row) > 0 {
 				writer.Write(row)
+				returnArray = append(returnArray, row)
 			}
 		}
 		// Continue recursion
@@ -124,6 +129,7 @@ func processTable(table *html.Node, writer *csv.Writer) {
 		}
 	}
 	walk(table)
+	return returnArray
 }
 
 // extractText gets all text content from a node and its children recursively

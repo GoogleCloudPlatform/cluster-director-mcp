@@ -57,6 +57,28 @@ func WriteToLog(message string) {
 	logger.Info(message)
 }
 
+// SearchByColumn1 searches for a target string in the second column (index 1).
+// It returns the found row and true, or nil and false if not found.
+func SearchByColumn1(data [][]string, target string) ([]string, bool) {
+	for _, row := range data {
+		// SAFETY CHECK: Ensure the row has at least 2 columns (indices 0 and 1)
+		// If we don't check this, a short row will cause a "panic: index out of range"
+		if len(row) > 1 {
+
+			// Option A: Exact Match (Case-Sensitive)
+			if row[1] == target {
+				return row, true
+			}
+
+			// Option B: Case-Insensitive Match (Uncomment to use)
+			// if strings.EqualFold(row[1], target) {
+			// 	return row, true
+			// }
+		}
+	}
+	return nil, false
+}
+
 // getLastLines scans the string and keeps a rolling slice of the last n lines.
 func GetLastLines(s string, n int) string {
 	var lines []string
