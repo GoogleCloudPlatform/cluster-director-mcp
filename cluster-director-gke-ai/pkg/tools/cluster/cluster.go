@@ -213,7 +213,6 @@ func Install(s *mcp.Server, c *config.Config) {
 			return nil, SearchLogsResponse{Status: result}, err
 		},
 	)
-
 }
 
 func (h *handlers) searchLogsMCP(ctx context.Context, request *SearchLogsRequest, searchType LogSearchType) (string, error) {
@@ -271,9 +270,54 @@ func (h *handlers) searchLogsMCP(ctx context.Context, request *SearchLogsRequest
 		filter = fmt.Sprintf(`resource.type="gce_instance" AND timestamp >= "%s" AND (textPayload:"NVRM: Xid" OR jsonPayload.message:"NVRM: Xid")`, startTime)
 	}
 
-	return searchLogsCore(h, ctx, request, projectID, clusterName, lookbackDuration, filter)
+	retStr, err := searchLogsCore(h, ctx, request, projectID, clusterName, lookbackDuration, filter)
+
+	genericCore.WriteToLog("searchLogsCore.3333")
+	if retStr != "" && searchType == WereThereXidFailureMessages {
+
+		xidStr := parseXidNumber(retStr)
+
+		genericCore.WriteToLog("searchLogsCore.4444 . xidStr" + xidStr)
+
+		url := "https://docs.nvidia.com/deploy/xid-errors/analyzing-xid-catalog.html"
+		retTable, xidErrorsScraped, scrapeSuccessful := genericCore.ScrapeURL(url, "Mnemonic")
+
+		if scrapeSuccessful {
+			genericCore.WriteToLog("searchLogsCore.5555")
+			thisXidDefinitionArray, foundXidDefinition := genericCore.SearchByColumn1(retTable, xidStr)
+			if foundXidDefinition {
+				thisXidDefinitionStr := strings.Join(thisXidDefinitionArray, " ")
+				genericCore.WriteToLog("searchLogsCore.6666 thisXidDefinitionStr" + thisXidDefinitionStr)
+				retStr = thisXidDefinitionStr + retStr
+			} else {
+				genericCore.WriteToLog("searchLogsCore.7777")
+				retStr = xidErrorsScraped + retStr
+			}
+		}
+	}
+
+	return retStr, err
 }
 
+func parseXidNumber(logLine string) string {
+	//logLine := "Jan 14 22:15:17 nadiggpu64-nodeset1-40 kernel: [2437042.862382] NVRM: Xid (PCI:0000:84:00): 95, Uncontained: FBHUB. RST: Yes"
+
+	// 1. Find the anchor "): "
+	// "after" will be "95, Uncontained: FBHUB. RST: Yes"
+	_, after, found := strings.Cut(logLine, "): ")
+
+	if found {
+		// 2. Cut at the comma to get just the number
+		// "numberStr" will be "95"
+		numberStr, _, _ := strings.Cut(after, ",")
+
+		// 3. Convert to int
+		//xid, _ := strconv.Atoi(strings.TrimSpace(numberStr))
+
+		return numberStr
+	}
+	return ""
+}
 func searchLogsCore(h *handlers, ctx context.Context, request *SearchLogsRequest,
 	projectID string, clusterName string, lookbackDuration time.Duration, filter string) (string, error) {
 	genericCore.WriteToLog("-------------------searchLogsCore()-------------------")
