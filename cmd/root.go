@@ -103,5 +103,5 @@ func runInstallGeminiCLICmd(cmd *cobra.Command, args []string) {
 	if err := install.GeminiCLIExtension(wd, version, exePath); err != nil {
 		log.Fatalf("Failed to install for gemini-cli: %v", err)
 	}
-	fmt.Println("Successfully installed Cluster Director MCP server as a gemini-cli extension.")
+	fmt.Fprintf(os.Stderr, "Successfully installed Cluster Director MCP server as a gemini-cli extension.")
 }
