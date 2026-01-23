@@ -16,7 +16,6 @@ package config
 
 import (
 	"fmt"
-	"log"
 	"os/exec"
 	"strings"
 
@@ -72,7 +71,6 @@ func getDefaultProjectID() string {
 		return ""
 	}
 	projectID := strings.TrimSpace(string(out))
-	log.Printf("Using default project ID: %s", projectID)
 	genericCore.WriteToLog(fmt.Sprintf("Using default project ID: %s", projectID))
 	return projectID
 }

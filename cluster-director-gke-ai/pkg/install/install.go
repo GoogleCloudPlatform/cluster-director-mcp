@@ -14,6 +14,7 @@
 package install
 
 import (
+	"cluster-director-mcp/genericCore"
 	_ "embed"
 	"encoding/json"
 	"fmt"
@@ -22,23 +23,33 @@ import (
 )
 
 func GeminiCLIExtension(baseDir, version, exePath string) error {
-	extensionDir := filepath.Join(baseDir, ".gemini", "extensions", "cluster-director-mcp")
+	extensionDir := filepath.Join(baseDir, ".gemini", "extensions", "cluster-director-mcp", "cluster-director-gke-ai")
+
+	genericCore.WriteToLog(fmt.Sprintf("install.go:GeminiCLIExtension.0000.AAAA %s", baseDir))
+	genericCore.WriteToLog(fmt.Sprintf("install.go:GeminiCLIExtension.0000.BBBB %s", exePath))
+	genericCore.WriteToLog(fmt.Sprintf("install.go:GeminiCLIExtension.0000.CCCC %s", extensionDir))
+
 	if err := os.MkdirAll(extensionDir, 0755); err != nil {
+		genericCore.WriteToLog("install.go:GeminiCLIExtension.1111")
 		return fmt.Errorf("could not create extension directory: %w", err)
 	}
 
+	genericCore.WriteToLog("install.go:GeminiCLIExtension.2222")
+
 	// Create the manifest file as described in https://github.com/google-gemini/gemini-cli/blob/main/docs/extension.md.
 	manifest := map[string]interface{}{
-		"name":            "cluster-director-mcp",
+		"name":            "cluster-director-gke-ai",
 		"version":         version,
-		"description":     "Agentic AI-Assistant to use, manage and monitor Clusters created using Cluster Director.",
+		"description":     "Cluster Director GKE AI-Assistant to use, manage and monitor GKE Clusters",
 		"contextFileName": baseDir + "/.gemini/extensions/cluster-director-mcp/GEMINI.md",
 		"mcpServers": map[string]interface{}{
-			"cluster-director-mcp": map[string]interface{}{
+			"cluster-director-gke-ai": map[string]interface{}{
 				"command": exePath,
 			},
 		},
 	}
+
+	genericCore.WriteToLog("install.go:GeminiCLIExtension.2222")
 
 	manifestPath := filepath.Join(extensionDir, "gemini-extension.json")
 	data, err := json.MarshalIndent(manifest, "", "  ")
@@ -51,6 +62,6 @@ func GeminiCLIExtension(baseDir, version, exePath string) error {
 	}
 
 	// print to stderr
-	fmt.Fprintf(os.Stderr, "Successfully installed Cluster Director MCP extension for Gemini CLI.\n")
+	fmt.Fprintf(os.Stderr, "Successfully installed Cluster Director GKE AI extension for Gemini CLI.\n")
 	return nil
 }
