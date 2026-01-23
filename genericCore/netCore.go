@@ -45,11 +45,10 @@ func scrapeURL(url string, tableHeaderToSearch string) (string, bool) {
 	//tableNode := findTableByHeader(doc, "Mnemonic")
 	tableNode := findTableByHeader(doc, tableHeaderToSearch)
 	if tableNode == nil {
-		return fmt.Sprintf("Could not find the Xid table with header %s", tableHeaderToSearch), false
+		return fmt.Sprintf("Could not find table with header %s", tableHeaderToSearch), false
 	}
 
-	// 4. Setup CSV Writer
-	// 1. Create a strings.Builder (this implements io.Writer)
+	// Write to strings builder
 	var sb strings.Builder
 	writer := csv.NewWriter(&sb)
 	defer writer.Flush()
