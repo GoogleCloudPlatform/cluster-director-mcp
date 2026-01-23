@@ -198,10 +198,6 @@ func Install(s *mcp.Server, c *config.Config) {
 					"type":        "string",
 					"description": "GCP project ID. Use the default if the user doesn't provide it.",
 				},
-				"clusterName": map[string]interface{}{
-					"type":        "string",
-					"description": "Cluster name. Do not select it yourself, make sure the user provides or confirms the cluster name.",
-				},
 				"numberOfDays": map[string]interface{}{
 					"type":        "number",
 					"description": "Number of days. Default value is 1",
@@ -234,12 +230,15 @@ func (h *handlers) searchLogsMCP(ctx context.Context, request *SearchLogsRequest
 	}
 
 	genericCore.WriteToLog("searchLogsCore.1111")
-	clusterName := request.ClusterName
+	clusterName := ""
+	if searchType != WereThereXidFailureMessages {
+		clusterName = request.ClusterName
 
-	// Since ClusterName is required by the schema, we only check for empty string here
-	// for safety, though the SDK should ensure it's present.
-	if clusterName == "" {
-		return "Need cluster name", nil
+		// Since ClusterName is required by the schema, we only check for empty string here
+		// for safety, though the SDK should ensure it's present.
+		if clusterName == "" {
+			return "Need cluster name", nil
+		}
 	}
 
 	numberOfDays := request.NumberOfDays
