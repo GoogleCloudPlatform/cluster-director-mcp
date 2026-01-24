@@ -8,6 +8,7 @@ require (
 	cloud.google.com/go/logging v1.13.0
 	github.com/modelcontextprotocol/go-sdk v1.1.0
 	github.com/spf13/cobra v1.9.1
+	golang.org/x/net v0.42.0
 	google.golang.org/api v0.244.0
 	google.golang.org/protobuf v1.36.6
 )
@@ -37,7 +38,6 @@ require (
 	go.opentelemetry.io/otel/metric v1.37.0 // indirect
 	go.opentelemetry.io/otel/trace v1.37.0 // indirect
 	golang.org/x/crypto v0.40.0 // indirect
-	golang.org/x/net v0.42.0 // indirect
 	golang.org/x/oauth2 v0.30.0 // indirect
 	golang.org/x/sync v0.16.0 // indirect
 	golang.org/x/sys v0.34.0 // indirect
