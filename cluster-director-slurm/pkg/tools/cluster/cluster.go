@@ -493,52 +493,6 @@ func Install(s *mcp.Server, c *config.Config) {
 			return nil, SoftwareVersionInfoResponse{VersionInfo: result}, err
 		})
 
-	debugAggregationTool := mcp.Tool{
-		Name:        "debug_result_aggregation",
-		Description: "Debugs the result aggregation and hostname compression logic. Takes a map of 'NodeName':'Result' and options.",
-		InputSchema: map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"nodeResults": map[string]interface{}{
-					"type":        "object",
-					"description": "Key-Value pairs where Key is NodeName (e.g. node1) and Value is the Result (e.g. Timeout)",
-					"additionalProperties": map[string]interface{}{
-						"type": "string",
-					},
-				},
-				"ignoreWhitespace": map[string]interface{}{
-					"type":        "boolean",
-					"description": "If true, ignores whitespace when comparing results.",
-				},
-				"compressHostnames": map[string]interface{}{
-					"type":        "boolean",
-					"description": "If true, compresses node lists (e.g. node[1-3]).",
-				},
-			},
-			"required": []string{"nodeResults"},
-		},
-	}
-	mcp.AddTool(
-		s,
-		&debugAggregationTool,
-		func(ctx context.Context, _ *mcp.CallToolRequest, req struct {
-			NodeResults       map[string]string `json:"nodeResults"`
-			IgnoreWhitespace  bool              `json:"ignoreWhitespace"`
-			CompressHostnames bool              `json:"compressHostnames"`
-		}) (*mcp.CallToolResult, map[string]string, error) {
-
-			// Select Strategy
-			strategy := StrategyStrict
-			if req.IgnoreWhitespace {
-				strategy = StrategyIgnoreWhitespace
-			}
-
-			// CALL THE NEW LOGIC in resultcore.go
-			output := ProcessResults(req.NodeResults, strategy, req.CompressHostnames)
-
-			return nil, output, nil
-		},
-	)
 }
 
 // Place on local host to store files
