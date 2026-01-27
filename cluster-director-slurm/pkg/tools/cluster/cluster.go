@@ -168,9 +168,12 @@ func Install(s *mcp.Server, c *config.Config) {
 	mcp.AddTool(
 		s,
 		&listClustersTool,
-		func(ctx context.Context, _ *mcp.CallToolRequest, req ListClustersRequest) (*mcp.CallToolResult, ListClustersResponse, error) {
+		func(ctx context.Context, _ *mcp.CallToolRequest, req ListClustersRequest) (*mcp.CallToolResult, any, error) {
 			result, err := h.listClusters(ctx, &req)
-			return nil, ListClustersResponse{ClusterList: result}, err
+			if err != nil {
+				return nil, nil, err
+			}
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: result}}}, nil, nil
 		},
 	)
 
@@ -199,9 +202,12 @@ func Install(s *mcp.Server, c *config.Config) {
 	mcp.AddTool(
 		s,
 		&getClusterTool,
-		func(ctx context.Context, _ *mcp.CallToolRequest, req GetClusterRequest) (*mcp.CallToolResult, GetClusterResponse, error) {
+		func(ctx context.Context, _ *mcp.CallToolRequest, req GetClusterRequest) (*mcp.CallToolResult, any, error) {
 			result, err := h.getCluster(ctx, &req)
-			return nil, GetClusterResponse{ClusterInfo: result}, err
+			if err != nil {
+				return nil, nil, err
+			}
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: result}}}, nil, nil
 		},
 	)
 
@@ -230,9 +236,12 @@ func Install(s *mcp.Server, c *config.Config) {
 	mcp.AddTool(
 		s,
 		&showClusterState,
-		func(ctx context.Context, _ *mcp.CallToolRequest, req ShowClusterStateRequest) (*mcp.CallToolResult, ShowClusterStateResponse, error) {
+		func(ctx context.Context, _ *mcp.CallToolRequest, req ShowClusterStateRequest) (*mcp.CallToolResult, any, error) {
 			result, err := h.showClusterState(ctx, &req)
-			return nil, ShowClusterStateResponse{StateInfo: result}, err
+			if err != nil {
+				return nil, nil, err
+			}
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: result}}}, nil, nil
 		},
 	)
 
@@ -261,9 +270,12 @@ func Install(s *mcp.Server, c *config.Config) {
 	mcp.AddTool(
 		s,
 		&showJobState,
-		func(ctx context.Context, _ *mcp.CallToolRequest, req ShowJobStateRequest) (*mcp.CallToolResult, ShowJobStateResponse, error) {
+		func(ctx context.Context, _ *mcp.CallToolRequest, req ShowJobStateRequest) (*mcp.CallToolResult, any, error) {
 			result, err := h.showJobState(ctx, &req)
-			return nil, ShowJobStateResponse{JobState: result}, err
+			if err != nil {
+				return nil, nil, err
+			}
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: result}}}, nil, nil
 		},
 	)
 
@@ -292,9 +304,12 @@ func Install(s *mcp.Server, c *config.Config) {
 	mcp.AddTool(
 		s,
 		&showRecentJobs,
-		func(ctx context.Context, _ *mcp.CallToolRequest, req ShowRecentJobsRequest) (*mcp.CallToolResult, ShowRecentJobsResponse, error) {
+		func(ctx context.Context, _ *mcp.CallToolRequest, req ShowRecentJobsRequest) (*mcp.CallToolResult, any, error) {
 			result, err := h.showRecentJobs(ctx, &req)
-			return nil, ShowRecentJobsResponse{JobsInfo: result}, err
+			if err != nil {
+				return nil, nil, err
+			}
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: result}}}, nil, nil
 		},
 	)
 
@@ -331,9 +346,12 @@ func Install(s *mcp.Server, c *config.Config) {
 	mcp.AddTool(
 		s,
 		&runNCCLTests,
-		func(ctx context.Context, _ *mcp.CallToolRequest, req RunClusterTestsRequest) (*mcp.CallToolResult, RunClusterTestsResponse, error) {
+		func(ctx context.Context, _ *mcp.CallToolRequest, req RunClusterTestsRequest) (*mcp.CallToolResult, any, error) {
 			result, err := h.runNCCLTests(ctx, &req)
-			return nil, RunClusterTestsResponse{Status: result}, err
+			if err != nil {
+				return nil, nil, err
+			}
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: result}}}, nil, nil
 		},
 	)
 
@@ -370,9 +388,12 @@ func Install(s *mcp.Server, c *config.Config) {
 	mcp.AddTool(
 		s,
 		&runDCGMTests,
-		func(ctx context.Context, _ *mcp.CallToolRequest, req RunClusterTestsRequest) (*mcp.CallToolResult, RunClusterTestsResponse, error) {
+		func(ctx context.Context, _ *mcp.CallToolRequest, req RunClusterTestsRequest) (*mcp.CallToolResult, any, error) {
 			result, err := h.runDCGMTests(ctx, &req)
-			return nil, RunClusterTestsResponse{Status: result}, err
+			if err != nil {
+				return nil, nil, err
+			}
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: result}}}, nil, nil
 		},
 	)
 
@@ -401,9 +422,12 @@ func Install(s *mcp.Server, c *config.Config) {
 	mcp.AddTool(
 		s,
 		&listPartitionInfo,
-		func(ctx context.Context, _ *mcp.CallToolRequest, req ListPartitionInfoRequest) (*mcp.CallToolResult, ListPartitionInfoResponse, error) {
+		func(ctx context.Context, _ *mcp.CallToolRequest, req ListPartitionInfoRequest) (*mcp.CallToolResult, any, error) {
 			result, err := h.listPartitionInfo(ctx, &req)
-			return nil, ListPartitionInfoResponse{PartitionInfo: result}, err
+			if err != nil {
+				return nil, nil, err
+			}
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: result}}}, nil, nil
 		},
 	)
 
@@ -428,9 +452,12 @@ func Install(s *mcp.Server, c *config.Config) {
 	mcp.AddTool(
 		s,
 		&checkCDMcpJobStatus,
-		func(ctx context.Context, _ *mcp.CallToolRequest, req CheckCDMcpJobStatusRequest) (*mcp.CallToolResult, CheckCDMcpJobStatusResponse, error) {
+		func(ctx context.Context, _ *mcp.CallToolRequest, req CheckCDMcpJobStatusRequest) (*mcp.CallToolResult, any, error) {
 			result, err := h.checkCDMcpJobStatus(ctx, &req)
-			return nil, CheckCDMcpJobStatusResponse{JobStatus: result}, err
+			if err != nil {
+				return nil, nil, err
+			}
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: result}}}, nil, nil
 		})
 
 	checkMaintenanceEvents := mcp.Tool{
@@ -458,9 +485,12 @@ func Install(s *mcp.Server, c *config.Config) {
 	mcp.AddTool(
 		s,
 		&checkMaintenanceEvents,
-		func(ctx context.Context, _ *mcp.CallToolRequest, req MaintenanceEventsRequest) (*mcp.CallToolResult, MaintenanceEventsResponse, error) {
+		func(ctx context.Context, _ *mcp.CallToolRequest, req MaintenanceEventsRequest) (*mcp.CallToolResult, any, error) {
 			result, err := h.checkMaintenanceEvents(ctx, &req)
-			return nil, MaintenanceEventsResponse{EventsInfo: result}, err
+			if err != nil {
+				return nil, nil, err
+			}
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: result}}}, nil, nil
 		})
 
 	showClusterSoftwareVersionInfo := mcp.Tool{
@@ -488,9 +518,12 @@ func Install(s *mcp.Server, c *config.Config) {
 	mcp.AddTool(
 		s,
 		&showClusterSoftwareVersionInfo,
-		func(ctx context.Context, _ *mcp.CallToolRequest, req SoftwareVersionInfoRequest) (*mcp.CallToolResult, SoftwareVersionInfoResponse, error) {
+		func(ctx context.Context, _ *mcp.CallToolRequest, req SoftwareVersionInfoRequest) (*mcp.CallToolResult, any, error) {
 			result, err := h.showClusterSoftwareVersionInfo(ctx, &req)
-			return nil, SoftwareVersionInfoResponse{VersionInfo: result}, err
+			if err != nil {
+				return nil, nil, err
+			}
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: result}}}, nil, nil
 		})
 
 }
