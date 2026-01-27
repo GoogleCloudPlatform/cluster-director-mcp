@@ -17,6 +17,7 @@ package genericCore
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -81,6 +82,52 @@ type PlainHandler struct {
 // Enabled reports whether the handler handles records at the given level.
 func (h *PlainHandler) Enabled(ctx context.Context, level slog.Level) bool {
 	return level >= h.opts.Level.Level()
+}
+
+func ParseTime(dateStr string) (time.Time, bool) {
+
+	layouts := []string{
+		time.RFC3339,       // ISO 8601
+		"2006-01-02",       // YYYY-MM-DD
+		"01/02/2006",       // MM/DD/YYYY
+		"02-01-2006 15:04", // DD-MM-YYYY HH:MM
+		"Jan 2, 2006",      // Month Day, Year
+		"02 Jan 2006",      // Date (DD Mon YYYY) e.g., "25 Oct 2023"
+		"Jan 2",            // Date, Month (Mon DD) e.g., "Oct 25"
+		"02",               // Just the day
+	}
+
+	parsedTime, formatUsed, err := parseWithFallback(dateStr, layouts)
+	if err != nil {
+		WriteToLog("Could not parse date string: " + dateStr)
+		return time.Now(), false
+	}
+
+	// Post-processing: Infer missing data based on the format used
+	now := time.Now()
+
+	switch formatUsed {
+	case "02":
+		// Case: User gave only "Day". Use Current Year and Current Month.
+		parsedTime = time.Date(now.Year(), now.Month(), parsedTime.Day(), 0, 0, 0, 0, time.Local)
+
+	case "Jan 2":
+		// Case: User gave "Month Day". Use Current Year.
+		parsedTime = parsedTime.AddDate(now.Year(), 0, 0)
+	}
+	WriteToLog(fmt.Sprintf("Successfully parsed input date string %s \nParsed Time: %v\nFormat Used: %s\n", dateStr, parsedTime, formatUsed))
+
+	return parsedTime, true
+}
+
+func parseWithFallback(input string, formats []string) (time.Time, string, error) {
+	for _, layout := range formats {
+		t, err := time.Parse(layout, input)
+		if err == nil {
+			return t, layout, nil
+		}
+	}
+	return time.Time{}, "", errors.New("no matching time format found")
 }
 
 // Handle formats the record as a plain string without keys

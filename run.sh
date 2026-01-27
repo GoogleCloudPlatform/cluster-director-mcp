@@ -49,11 +49,11 @@ if gcloud projects get-iam-policy "$PROJECT_ID" \
   --flatten="bindings[].members" \
   --format='table(bindings.role, bindings.members)' \
   | grep -qE "does\s+not\s+have\s+permissions\s+" ; then
-  echo "Failure: User does not have permissions to query IAM roles."
+  echo "FAILURE: User does not have permissions to query IAM roles."
   echo "Please request the role roles/browser or roles/viewer from your project admin/owner of $PROJECT_ID"
   exit 1
 else
-  echo "Success: User has permissions to query IAM roles."
+  echo "SUCCESS: User has permissions to query IAM roles."
 fi
 
 # check IAM roles
