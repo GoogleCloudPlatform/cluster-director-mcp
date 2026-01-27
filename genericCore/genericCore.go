@@ -36,29 +36,77 @@ func WriteToLog(message string) {
 
 	if logger == nil {
 		f := CreateUniqueFilePath("logs/log.cluster-director-mcp")
+		var writer io.Writer
+		if f != nil {
+			writer = f
+		} else {
+			writer = os.Stdout
+		}
 
 		opts := &slog.HandlerOptions{
-			AddSource: true,           // Include file and line number
-			Level:     slog.LevelInfo, // Default level
+			AddSource: true,
+			Level:     slog.LevelInfo,
 		}
 
-		if f != nil {
-			logger = slog.New(slog.NewTextHandler(f, opts))
-		} else {
-			logger = slog.New(slog.NewTextHandler(os.Stdout, opts))
+		// Initialize the custom handler
+		handler := &PlainHandler{
+			w:    writer,
+			opts: *opts,
 		}
 
+		logger = slog.New(handler)
 		slog.SetDefault(logger)
 	}
 
+	// 1. Capture the Program Counter (PC) of the caller
+	// We skip 2 frames:
+	// 0 = runtime.Callers
+	// 1 = WriteToLog
+	// 2 = The function calling WriteToLog (e.g., clusterCore.go)
 	var pcs [1]uintptr
 	runtime.Callers(2, pcs[:])
 
+	// 2. Create the record with the specific PC
 	r := slog.NewRecord(time.Now(), slog.LevelInfo, message, pcs[0])
 
+	// 3. Handle the record
 	_ = logger.Handler().Handle(context.Background(), r)
-
 }
+
+type PlainHandler struct {
+	w    io.Writer
+	opts slog.HandlerOptions
+}
+
+// Enabled reports whether the handler handles records at the given level.
+func (h *PlainHandler) Enabled(ctx context.Context, level slog.Level) bool {
+	return level >= h.opts.Level.Level()
+}
+
+// Handle formats the record as a plain string without keys
+func (h *PlainHandler) Handle(ctx context.Context, r slog.Record) error {
+	// 1. Format Time
+	timeStr := r.Time.Format(time.RFC3339)
+
+	// 2. Format Source (File:Line)
+	sourceStr := ""
+	if h.opts.AddSource && r.PC != 0 {
+		fs := runtime.CallersFrames([]uintptr{r.PC})
+		f, _ := fs.Next()
+		sourceStr = fmt.Sprintf("%s:%d", f.File, f.Line)
+	}
+
+	// 3. Format Level
+	levelStr := r.Level.String()
+
+	// 4. Construct the final string: "TIME LEVEL SOURCE MESSAGE"
+	_, err := fmt.Fprintf(h.w, "%s %s %s %s\n", timeStr, levelStr, sourceStr, r.Message)
+	return err
+}
+
+func (h *PlainHandler) WithAttrs(attrs []slog.Attr) slog.Handler { return h }
+
+func (h *PlainHandler) WithGroup(name string) slog.Handler { return h }
 
 // SearchByColumn1 searches for a target string in the second column (index 1).
 // It returns the found row and true, or nil and false if not found.

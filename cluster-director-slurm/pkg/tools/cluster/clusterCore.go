@@ -315,7 +315,7 @@ func getClustersInRegionIfExists(region string, projectID string) {
 	region2ClusterNames[region] = []string{}
 
 	bodyString, success := genericCore.QueryURLAndGetResult(authToken, url)
-	genericCore.WriteToLog(fmt.Sprintf("Response from Cluster Director API on the clusters in region %s : %s ", region, string(bodyString)))
+	genericCore.WriteToLog(fmt.Sprintf("Response received from Cluster Director API for region %s (Payload Size: %d bytes)", region, len(bodyString)))
 	// If the body has "storages" than that means it is a cluster
 	if success && strings.Contains(bodyString, "storages") {
 		genericCore.WriteToLog("Trying to parse JSON...")
