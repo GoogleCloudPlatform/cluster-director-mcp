@@ -492,6 +492,7 @@ func Install(s *mcp.Server, c *config.Config) {
 			result, err := h.showClusterSoftwareVersionInfo(ctx, &req)
 			return nil, SoftwareVersionInfoResponse{VersionInfo: result}, err
 		})
+
 }
 
 // Place on local host to store files
@@ -1108,42 +1109,15 @@ func getNCCLOrDCGMTestsStatus(projectID string, ncclOrDCGMTestJobObj *persistenc
 		return string(genericCore.GetLastLines(sshOut, 10) + "\nNCCL Tests are probably still running. I could not copy the summary file " + persistence.CDMCP_SUMMARY_LOG + " on cluster " + ncclOrDCGMTestJobObj.ClusterName + " over from login node " + ncclOrDCGMTestJobObj.LoginNodeName + " . Check job status later or verify status manually."), false
 	}
 
-	// Process MAIN log to look for PASS/FAIL
-	if ncclOrDCGMTestJobObj.JobType == persistence.NCCL_TEST {
-		if strings.Contains(mainLogContents, "Insufficient bus bandwidth on nodes") {
-			ncclOrDCGMTestJobObj.JobStatus = persistence.Completed
-			ncclOrDCGMTestJobObj.JobExecutionResult = persistence.FAIL
-			ncclOrDCGMTestJobObj.LastStatusUpdateTime = time.Now()
-			ncclOrDCGMTestJobObj.JobExecutionResultString += "NCCL tests failed! Insufficient bus bandwidth on some or all nodes"
+	status, result, summary := AnalyzeJobLog(ncclOrDCGMTestJobObj.JobType, mainLogContents)
 
-			return "Job failed ! Insufficient bus bandwidth on nodes!", true
-		} else if strings.Contains(mainLogContents, "NCCL test passing on all nodes") {
-			// NCCL tests PASSED
-			ncclOrDCGMTestJobObj.JobStatus = persistence.Completed
-			ncclOrDCGMTestJobObj.JobExecutionResult = persistence.SUCCESS
-			ncclOrDCGMTestJobObj.LastStatusUpdateTime = time.Now()
-			ncclOrDCGMTestJobObj.JobExecutionResultString += "NCCL tests PASSED on all nodes!"
-
-			return "Job Completed Successfully!", true
-		}
-	} else if ncclOrDCGMTestJobObj.JobType == persistence.DCGM_TEST {
-		if strings.Contains(mainLogContents, "DCGM failed") {
-			ncclOrDCGMTestJobObj.JobStatus = persistence.Completed
-			ncclOrDCGMTestJobObj.JobExecutionResult = persistence.FAIL
-			ncclOrDCGMTestJobObj.LastStatusUpdateTime = time.Now()
-			ncclOrDCGMTestJobObj.JobExecutionResultString += "DCGM tests failed!"
-
-			return "DCGM failed!", true
-		} else if strings.Contains(mainLogContents, "DCGM diagnostics passing on all nodes") {
-
-			ncclOrDCGMTestJobObj.JobStatus = persistence.Completed
-			ncclOrDCGMTestJobObj.JobExecutionResult = persistence.SUCCESS
-			ncclOrDCGMTestJobObj.LastStatusUpdateTime = time.Now()
-			ncclOrDCGMTestJobObj.JobExecutionResultString += "DCGM diagnostics passing on all nodes!"
-
-			return "DCGM diagnostics passing on all nodes", true
-		}
-	} else {
+	if status == persistence.Completed {
+		ncclOrDCGMTestJobObj.JobStatus = status
+		ncclOrDCGMTestJobObj.JobExecutionResult = result
+		ncclOrDCGMTestJobObj.LastStatusUpdateTime = time.Now()
+		ncclOrDCGMTestJobObj.JobExecutionResultString += summary
+		return summary, true
+	} else if ncclOrDCGMTestJobObj.JobType != persistence.NCCL_TEST && ncclOrDCGMTestJobObj.JobType != persistence.DCGM_TEST {
 		genericCore.WriteToLog("Unsupported job type, only support NCCL or DCGM long running jobs")
 		return "Unsupported job type, only support NCCL or DCGM long running jobs", false
 	}
@@ -1552,14 +1526,14 @@ func getVersionCheckStatus(projectID string, jobObj *persistence.LongRunningJob)
 		return "Could not read local log file.", false
 	}
 
-	// Srun is blocking, so if we see output headers, the job likely finished.
-	if strings.Contains(content, "=== HOST:") {
-		jobObj.JobStatus = persistence.Completed
-		jobObj.JobExecutionResult = persistence.SUCCESS
-		jobObj.JobExecutionResultString = "Version Check Results:\n" + content
+	status, result, summary := AnalyzeJobLog(persistence.VERSION_CHECK, content)
+
+	if status == persistence.Completed {
+		jobObj.JobStatus = status
+		jobObj.JobExecutionResult = result
+		jobObj.JobExecutionResultString = summary
 		jobObj.LastStatusUpdateTime = time.Now()
 		return "Version Check Completed Successfully!", true
 	}
-
 	return "Job is running...", true
 }
