@@ -42,11 +42,11 @@ func AnalyzeJobLog(jobType persistence.LONG_RUNNING_OPERATION, logContent string
 		if strings.Contains(logContent, "Version Check Completed Successfully!") {
 			status = persistence.Completed
 			result = persistence.SUCCESS
-			summary = "Version Check Completed Successfully."
+			summary = "Version Check Completed Successfully.\n\n" + logContent
 		} else if strings.Contains(logContent, "=== HOST:") {
 			status = persistence.Completed
 			result = persistence.SUCCESS
-			summary = "Version Check output received."
+			summary = "Version Check output received. \n\n" + logContent
 		}
 
 	case persistence.DCGM_TEST:
