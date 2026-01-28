@@ -52,13 +52,28 @@ type SearchLogsRequestWithoutCluster struct {
 	NumberOfDays int `json:"NumberOfDays,omitempty" jsonschema:"default=14,description=Number of days before today to search Cloud Logs"`
 }
 
-type SearchLogsRequestXid struct {
+type SearchLogsRequestXidGkeClusters struct {
+	StartDate string `json:"StartDate,omitempty" jsonschema:"description=Start date to search Cloud Logs"`
+	EndDate   string `json:"EndDate,omitempty" jsonschema:"description=End date to search Cloud Logs"`
+	//	NumberOfDays int    `json:"NumberOfDays,omitempty" jsonschema:"default=14,description=Number of days before today to search Cloud Logs"`
+	JobName     string `json:"JobName,omitempty" jsonschema:"description=GKE Job Name whose logs we should search"`
+	ClusterName string `json:"ClusterName,omitempty" jsonschema:"description=GKE cluster Name whose logs we should search"`
+}
+
+type SearchLogsRequestXidGkePods struct {
+	StartDate string `json:"StartDate,omitempty" jsonschema:"description=Start date to search Cloud Logs"`
+	EndDate   string `json:"EndDate,omitempty" jsonschema:"description=End date to search Cloud Logs"`
+	JobName   string `json:"JobName,omitempty" jsonschema:"description=Name of the GKE Job whose logs we should search"`
+	PodName   string `json:"PodName,omitempty" jsonschema:"description=Name of the pod whose logsr5 we should search"`
+}
+
+type SearchLogsRequestXidGce struct {
 	StartDate    string `json:"StartDate,omitempty" jsonschema:"description=Start date to search Cloud Logs"`
 	EndDate      string `json:"EndDate,omitempty" jsonschema:"description=End date to search Cloud Logs"`
 	NumberOfDays int    `json:"NumberOfDays,omitempty" jsonschema:"default=14,description=Number of days before today to search Cloud Logs"`
 	InstanceName string `json:"InstanceName,omitempty" jsonschema:"description=Name of the instance whose logs we should search"`
 	JobName      string `json:"JobName,omitempty" jsonschema:"description=Name of the GKE Job whose logs we should search"`
-	PodName      string `json:"PodName,omitempty" jsonschema:"description=Name of the pod whose logs we should search"`
+	PodName      string `json:"PodName,omitempty" jsonschema:"description=Name of the pod whose logsr5 we should search"`
 }
 
 type SearchLogsResponse struct {
@@ -72,10 +87,12 @@ type handlers struct {
 type LogSearchType int
 
 const (
-	AreNCCLDebugLogsEnabled     LogSearchType = iota // 0
-	WereThereNCCLWarnMessages                        // 1
-	WereThereNCCLErrorMessages                       // 2
-	WereThereXidFailureMessages                      // 3
+	AreNCCLDebugLogsEnabled                  LogSearchType = iota // 0
+	WereThereNCCLWarnMessages                                     // 1
+	WereThereNCCLErrorMessages                                    // 2
+	WereThereXidFailureMessagesInGkeCluster                       // 3
+	WereThereXidFailureMessagesInGkePod                           // 3
+	WereThereXidFailureMessagesInGceInstance                      // 3
 )
 
 func Install(s *mcp.Server, c *config.Config) {
@@ -182,9 +199,10 @@ func Install(s *mcp.Server, c *config.Config) {
 			},
 		)
 	*/
-	xidErrorPresentTool := mcp.Tool{
-		Name:        "are_xid_present",
-		Description: "Search GCP GKE logs for Xid errors",
+
+	searchXidGkeClusters := mcp.Tool{
+		Name:        "search_xid_in_gke_clusters",
+		Description: "Search GCP GKE Cluster logs for Xid errors for a specified job",
 		Annotations: &mcp.ToolAnnotations{
 			ReadOnlyHint:   true,
 			IdempotentHint: true,
@@ -193,48 +211,44 @@ func Install(s *mcp.Server, c *config.Config) {
 			"type": "object",
 			"properties": map[string]interface{}{
 				"StartDate": map[string]interface{}{
-					"type": "string",
-					//					"format": "%m-%d-%y",
+					"type":        "string",
 					"format":      "date",
 					"description": "The start of the time period to filter search results. Optional argument.",
 				},
 				"EndDate": map[string]interface{}{
-					"type": "string",
-					//					"format": "%m-%d-%y",
+					"type":        "string",
 					"format":      "date",
 					"description": "The end of the time period to filter search results. This is an optional argument.",
 				},
-				"NumberOfDays": map[string]interface{}{
-					"type":        "number",
-					"description": "Number of days before today to search results. Default value is 14. Optional argument.",
-				},
-				"InstanceName": map[string]interface{}{
-					"type":        "string",
-					"description": "Name of the GCE instance whose log to search. Optional argument.",
-				},
+				//				"NumberOfDays": map[string]interface{}{
+				//					"type":        "number",
+				//					"description": "Number of days before today to search results. Default value is 14. Optional argument.",
+				//				},
 				"JobName": map[string]interface{}{
 					"type":        "string",
-					"description": "GKE Job name whose logs to search. Optional argument.",
+					"description": "GKE Job name whose logs to search. Required argument.",
 				},
-				"PodName": map[string]interface{}{
+				"ClusterName": map[string]interface{}{
 					"type":        "string",
-					"description": "Name of the GKE pod whose log to search. Optional argument.",
+					"description": "Name of the GKE cluster whose log to search. Required argument.",
 				},
 			},
+			"required": []string{"ClusterName", "JobName"},
 		},
 	}
 	mcp.AddTool(
 		s,
-		&xidErrorPresentTool,
-		func(ctx context.Context, _ *mcp.CallToolRequest, req SearchLogsRequestXid) (*mcp.CallToolResult, SearchLogsResponse, error) {
-			result, err := h.searchLogsMCP(ctx, &req, WereThereXidFailureMessages)
+		&searchXidGkeClusters,
+		func(ctx context.Context, _ *mcp.CallToolRequest, req SearchLogsRequestXidGkeClusters) (*mcp.CallToolResult, SearchLogsResponse, error) {
+			result, err := h.searchLogsMCP(ctx, &req, WereThereXidFailureMessagesInGkeCluster)
 			return nil, SearchLogsResponse{Status: result}, err
 		},
 	)
+
 }
 
 // func (h *handlers) searchLogsMCP(ctx context.Context, request *SearchLogsRequest, searchType LogSearchType) (string, error) {
-func (h *handlers) searchLogsMCP(ctx context.Context, request *SearchLogsRequestXid, searchType LogSearchType) (string, error) {
+func (h *handlers) searchLogsMCP(ctx context.Context, request *SearchLogsRequestXidGkeClusters, searchType LogSearchType) (string, error) {
 	genericCore.WriteToLog("searchLogsMCP.0000")
 	projectID := h.c.GetDefaultProjectID()
 	if projectID == "" {
@@ -248,8 +262,8 @@ func (h *handlers) searchLogsMCP(ctx context.Context, request *SearchLogsRequest
 	var startDateStr, endDateStr, instanceName, jobName, podName string
 	var numberOfDays int
 	var startDateValid, endDateValid bool
-	// Xid failures do not input cluster name
-	if searchType == WereThereXidFailureMessages {
+
+	if searchType == WereThereXidFailureMessagesInGkeCluster {
 		genericCore.WriteToLog("searchLogsMCP.1111.AAAA")
 
 		startDateStr = request.StartDate
@@ -258,38 +272,27 @@ func (h *handlers) searchLogsMCP(ctx context.Context, request *SearchLogsRequest
 		endDateStr = request.EndDate
 		endDate, endDateValid = genericCore.ParseTime(endDateStr)
 
-		numberOfDays = request.NumberOfDays
-		if numberOfDays == 0 {
-			numberOfDays = 14
-		}
+		//		numberOfDays = request.NumberOfDays
+		//		if numberOfDays == 0 {
+		//			genericCore.WriteToLog("searchLogsMCP.1111.BBBB")
+		//			numberOfDays = 14
+		//		}
 
-		instanceName = request.InstanceName
 		jobName = request.JobName
-		podName = request.PodName
+		clusterName = request.ClusterName
 
-		if instanceName != "" && podName != "" {
-			return "Please specify only one of: InstanceName or PodName", nil
+		if jobName == "" {
+			genericCore.WriteToLog("searchLogsMCP.1111.CCCC")
+			return "JobName is required", nil
 		}
-		if instanceName != "" && jobName != "" {
-			return "Please specify only one of: InstanceName or JobName", nil
+		if clusterName == "" {
+			genericCore.WriteToLog("searchLogsMCP.1111.DDDD")
+			return "ClusterName is required", nil
 		}
 	}
-	/*
-		else {
-			clusterName = request.ClusterName
-
-			genericCore.WriteToLog("searchLogsMCP.1111.BBBB")
-			// Since ClusterName is required by the schema, we only check for empty string here
-			// for safety, though the SDK should ensure it's present.
-			if clusterName == "" {
-				genericCore.WriteToLog("searchLogsMCP.1111.CCCC")
-				return "Need cluster name", nil
-			}
-		}
-	*/
 
 	genericCore.WriteToLog("searchLogsMCP.2222.AAAA")
-	//func searchLogsMCP(projectID string, clusterName string) {
+
 	lookbackDuration := time.Duration(numberOfDays) * 24 * time.Hour // How far back to look
 
 	// Build the filter for GKE logs
@@ -307,12 +310,18 @@ func (h *handlers) searchLogsMCP(ctx context.Context, request *SearchLogsRequest
 	} else if searchType == WereThereNCCLErrorMessages {
 		genericCore.WriteToLog("searchLogsMCP.2222.DDDD WereThereNCCLErrorMessages")
 		filter = fmt.Sprintf(`resource.type="k8s_container" AND timestamp >= "%s" AND (textPayload:"*NCCL ERROR*" OR jsonPayload.message:"*NCCL ERROR*")`, startTimeFromLookBack)
-	} else if searchType == WereThereXidFailureMessages {
-		genericCore.WriteToLog("searchLogsMCP.2222.EEEE WereThereXidFailureMessages")
-		filter = fmt.Sprintf(`(textPayload:"NVRM: Xid" OR jsonPayload.message:"NVRM: Xid") `)
-		// Force cluster name to an empty string since its not applicable to Xid
-		clusterName = ""
+	} else if searchType == WereThereXidFailureMessagesInGkeCluster {
+		genericCore.WriteToLog("searchLogsMCP.2222.EEEE WereThereXidFailureMessagesInGkeCluster")
+		filter = `resource.type="k8s_pod" AND jsonPayload.reason="Scheduled" `
+		filter += fmt.Sprintf(` AND resource.labels.cluster_name="%s" `, clusterName)
+		filter += fmt.Sprintf(` AND (resource.labels.pod_name:"%s" OR labels."k8s-pod/job-name"="%s") `, jobName, jobName)
 
+		// Remove later
+		genericCore.WriteToLog("searchLogsMCP.2222.FFFF filter: " + filter)
+		//return "Success", nil
+	} else if searchType == WereThereXidFailureMessagesInGkePod {
+		genericCore.WriteToLog("searchLogsMCP.2222.GGGG WereThereXidFailureMessagesInGkePod")
+		filter = fmt.Sprintf(`(textPayload:"NVRM: Xid" OR jsonPayload.message:"NVRM: Xid") `)
 		if instanceName != "" {
 			//filter += fmt.Sprintf(` AND resource.type="gce_instance" AND resource.labels.instance_id="%s" `, instanceName)
 			filter += fmt.Sprintf(` AND resource.type="gce_instance" AND labels."compute.googleapis.com/resource_name"="%s" `, instanceName)
@@ -326,91 +335,126 @@ func (h *handlers) searchLogsMCP(ctx context.Context, request *SearchLogsRequest
 				filter += fmt.Sprintf(` AND resource.labels.pod_name="%s"" `, podName)
 			}
 
+			genericCore.WriteToLog("searchLogsMCP.2222.HHHH filter: " + filter)
 			// Remove later
+
+			//filter += fmt.Sprintf(` AND resource.type="gce_instance" `)
+			genericCore.WriteToLog("searchLogsMCP.2222.IIII filter: " + filter)
+
+			if startDateValid {
+				//filter = fmt.Sprintf(`resource.type="gce_instance" AND timestamp >= "%s" AND timestamp <= "%s" AND (textPayload:"NVRM: Xid" OR jsonPayload.message:"NVRM: Xid")`, startDate.String(), endDate.String())
+				filter += fmt.Sprintf(` AND timestamp >= "%s" `, startDate.Format("2006-01-02"))
+			}
+			if endDateValid {
+				filter += fmt.Sprintf(` AND timestamp <= "%s" `, endDate.Format("2006-01-02"))
+			}
+			if !startDateValid && !endDateValid {
+				filter += fmt.Sprintf(` AND timestamp >= "%s" `, startTimeFromLookBack)
+			}
+			if clusterName != "" {
+				filter += fmt.Sprintf(` AND resource.labels.cluster_name="%s"`, clusterName)
+			}
 			return "Success", nil
-		} else {
-			filter += fmt.Sprintf(` AND resource.type="gce_instance" `)
 		}
-
-		if startDateValid {
-			//filter = fmt.Sprintf(`resource.type="gce_instance" AND timestamp >= "%s" AND timestamp <= "%s" AND (textPayload:"NVRM: Xid" OR jsonPayload.message:"NVRM: Xid")`, startDate.String(), endDate.String())
-			filter += fmt.Sprintf(` AND timestamp >= "%s" `, startDate.Format("2006-01-02"))
-		}
-		if endDateValid {
-			filter += fmt.Sprintf(` AND timestamp <= "%s" `, endDate.Format("2006-01-02"))
-		}
-		if !startDateValid && !endDateValid {
-			filter += fmt.Sprintf(` AND timestamp >= "%s" `, startTimeFromLookBack)
-		}
-
-		genericCore.WriteToLog("searchLogsMCP.2222.FFFF . filter: " + filter)
+		genericCore.WriteToLog("searchLogsMCP.2222.KKKK . filter: " + filter)
 	}
 
-	if clusterName != "" {
-		filter += fmt.Sprintf(` AND resource.labels.cluster_name="%s"`, clusterName)
-	}
 	genericCore.WriteToLog("searchLogsMCP.3333.AAAA . filter: " + filter)
 
-	retStr, logSearchSuccess := searchLogsCore(h, ctx, projectID, filter)
+	// hard coded 128 max results of now
+	retMesgStr, returnResults, logSearchSuccess := searchLogsCore(h, ctx, projectID, filter, 128, searchType)
 
-	genericCore.WriteToLog("searchLogsMCP.3333.BBBB . retStr: " + retStr)
+	genericCore.WriteToLog("searchLogsMCP.3333.BBBB . retMesgStr: " + retMesgStr)
 
 	if !logSearchSuccess {
-		return retStr, nil
+		genericCore.WriteToLog("searchLogsMCP.3333.CCCC")
+		return retMesgStr, nil
 	}
 
-	if searchType == WereThereXidFailureMessages {
-		if retStr != "" {
-			xidStr := parseXidNumber(retStr)
+	if searchType == WereThereXidFailureMessagesInGkeCluster {
+		if logSearchSuccess {
+			// Each array in returnResults has podName, instName, location, xidErr
+			retMesgStr = fmt.Sprintf("searchLogsMCP.4444 got %d results for Pods", len(returnResults))
+			genericCore.WriteToLog("Success: " + retMesgStr + " but no Xid errors")
 
-			genericCore.WriteToLog("searchLogsMCP.4444 . xidStr" + xidStr)
+			// go through each one of the instances and search their logs
 
-			url := "https://docs.nvidia.com/deploy/xid-errors/analyzing-xid-catalog.html"
-			retTable, xidErrorsScraped, scrapeSuccessful := genericCore.ScrapeURL(url, "Mnemonic")
-
-			if scrapeSuccessful {
-				genericCore.WriteToLog("searchLogsMCP.5555")
-				thisXidDefinitionArray, foundXidDefinition := genericCore.SearchByColumn1(retTable, xidStr)
-				if foundXidDefinition {
-					thisXidDefinitionStr := strings.Join(thisXidDefinitionArray, " ")
-					genericCore.WriteToLog("searchLogsMCP.6666 thisXidDefinitionStr" + thisXidDefinitionStr)
-					retStr = thisXidDefinitionStr + retStr
-				} else {
-					genericCore.WriteToLog("searchLogsMCP.7777")
-					retStr = xidErrorsScraped + retStr
+			/*
+				url := "https://docs.nvidia.com/deploy/xid-errors/analyzing-xid-catalog.html"
+				retTable, xidErrorsScraped, scrapeSuccessful := genericCore.ScrapeURL(url, "Mnemonic")
+				if scrapeSuccessful {
+					genericCore.WriteToLog("searchLogsMCP.5555")
+					thisXidDefinitionArray, foundXidDefinition := genericCore.SearchByColumn1(retTable, returnResults[0][0])
+					if foundXidDefinition {
+						thisXidDefinitionStr := strings.Join(thisXidDefinitionArray, " ")
+						genericCore.WriteToLog("searchLogsMCP.6666 thisXidDefinitionStr" + thisXidDefinitionStr)
+						retMesgStr = thisXidDefinitionStr + retMesgStr
+					} else {
+						genericCore.WriteToLog("searchLogsMCP.7777")
+						retMesgStr = xidErrorsScraped + retMesgStr
+					}
 				}
-			}
+			*/
+			return doInstanceLogsHaveXidErrors(returnResults, h, ctx, projectID), nil
 		}
 	} else if searchType == AreNCCLDebugLogsEnabled {
-		if retStr != "" {
+		if logSearchSuccess {
 			genericCore.WriteToLog("searchLogsMCP.8888 NCCL Debug is enabled")
-			retStr += "NCCL Debug is enabled\n"
+			retMesgStr += "NCCL Debug is enabled\n"
 		} else {
 			genericCore.WriteToLog("searchLogsMCP.9999 NCCL Debug Info NOT found")
-			retStr = "NCCL Debug Info NOT found"
+			retMesgStr = "NCCL Debug Info NOT found"
 		}
 	} else if searchType == WereThereNCCLWarnMessages {
-		if retStr != "" {
+		if logSearchSuccess {
 			genericCore.WriteToLog("searchLogsMCP.AAAA NCCL WARN messages found")
-			retStr += "NCCL WARN messages were found\n"
+			retMesgStr += "NCCL WARN messages were found\n"
 		} else {
 			genericCore.WriteToLog("searchLogsMCP.BBBB NCCL WARN messages NOT found")
-			retStr = "NCCL WARN messages NOT found"
+			retMesgStr = "NCCL WARN messages NOT found"
 		}
 	} else if searchType == WereThereNCCLErrorMessages {
-		if retStr != "" {
+		if logSearchSuccess {
 			genericCore.WriteToLog("searchLogsMCP.CCCC NCCL ERROR messages found.")
-			retStr += "NCCL ERROR messages found.\n"
+			retMesgStr += "NCCL ERROR messages found.\n"
 		} else {
 			genericCore.WriteToLog("searchLogsMCP.DDDD NCCL ERROR messages NOT found")
-			retStr = "NCCL ERROR messages  NOT found"
+			retMesgStr = "NCCL ERROR messages  NOT found"
 		}
 	}
 
-	return retStr, nil
+	return retMesgStr, nil
 }
 
-func searchLogsCore(h *handlers, ctx context.Context, projectID string, filter string) (string, bool) {
+func doInstanceLogsHaveXidErrors(searchResults [][]string, h *handlers, ctx context.Context, projectID string) string {
+
+	filter := ` resource.type="gce_instance"  `
+
+	genericCore.WriteToLog("doInstanceLogsHaveXidErrors.0000")
+
+	for _, arr := range searchResults {
+		genericCore.WriteToLog("doInstanceLogsHaveXidErrors.1111 Processing arr: " + arr[0] + " , " + arr[1] + " , " + arr[2] + " , " + arr[3])
+		// podName, instName, location, XidErr
+		if arr[1] != "" {
+			genericCore.WriteToLog("doInstanceLogsHaveXidErrors.2222 inst: " + arr[1])
+			filter += fmt.Sprintf(` AND labels."compute.googleapis.com/resource_name"="%s" `, arr[1])
+		}
+	}
+
+	genericCore.WriteToLog("doInstanceLogsHaveXidErrors.3333")
+	resultStr, xidResults, success := searchLogsCore(h, ctx, projectID, filter, 1, WereThereXidFailureMessagesInGceInstance)
+
+	if success {
+		t := fmt.Sprintf("Found %s Xid errors in %s GCE instances", len(xidResults), len(searchResults))
+		genericCore.WriteToLog("doInstanceLogsHaveXidErrors.4444 : " + t)
+		return t
+	} else {
+		genericCore.WriteToLog("doInstanceLogsHaveXidErrors.5555")
+		return resultStr
+	}
+}
+
+func searchLogsCore(h *handlers, ctx context.Context, projectID string, filter string, maxResults int, searchType LogSearchType) (string, [][]string, bool) {
 	genericCore.WriteToLog("-------------------searchLogsCore()-------------------")
 
 	genericCore.WriteToLog("searchLogsCore.0000")
@@ -419,43 +463,62 @@ func searchLogsCore(h *handlers, ctx context.Context, projectID string, filter s
 	if err != nil {
 		genericCore.WriteToLog("searchLogsCore.1111")
 		genericCore.WriteToLog("Could not create logging client")
-		return fmt.Sprintf("Could not create logging client: %v", err), false
+		return fmt.Sprintf("Could not create logging client: %v", err), nil, false
 	}
-	genericCore.WriteToLog("searchLogsCore.2222")
+	genericCore.WriteToLog("searchLogsCore.2222.AAAA")
 
-	genericCore.WriteToLog(fmt.Sprintf("Querying logs with filter: %s\n", filter))
-	genericCore.WriteToLog("Scanning for NCCL debug indicators...")
+	genericCore.WriteToLog(fmt.Sprintf("searchLogsCore.2222.BBBB Querying logs with filter: %s\n", filter))
+	genericCore.WriteToLog("searchLogsCore.2222.CCCC Scanning for NCCL debug indicators...")
 
 	it := client.Entries(ctx, logadmin.Filter(filter))
 
+	countResults := 0
 	// This tells the GCP Server "only send me 1 item per page"
-	it.PageInfo().MaxSize = 1
+	//it.PageInfo().MaxSize = 1
 
-	var sampleLog = ""
+	var searchResults [][]string
 	//searchSuccess := true
 	// Iterate through the logs
+	var podName, payload, location, xidErr, instName string
+
 	for {
 		entry, err := it.Next()
 		if err == iterator.Done {
 			genericCore.WriteToLog("searchLogsCore.3333")
-			return "Search Results were empty", false
+			break
 		}
 		if err != nil {
 			genericCore.WriteToLog("searchLogsCore.4444")
 			//searchSuccess = false
-			return fmt.Sprintf("Could not iterate over search results: %v", err), false
+			return fmt.Sprintf("Could not iterate over search results: %v", err), nil, false
 		}
 
 		genericCore.WriteToLog("searchLogsCore.5555")
-		payload := getPayloadString(entry)
-		sampleLog = payload
-		break // Found positive confirmation, stop scanning
+
+		payload = getPayloadString(entry)
+		podName = entry.Resource.Labels["pod_name"]
+		location = entry.Resource.Labels["location"]
+
+		if searchType == WereThereXidFailureMessagesInGkeCluster {
+			genericCore.WriteToLog("searchLogsCore.6666")
+			xidErr = parseXidNumber(payload)
+			instName = getGceInstanceForPod(podName)
+			searchResults = append(searchResults, []string{podName, instName, location, xidErr})
+		} else {
+			genericCore.WriteToLog("searchLogsCore.7777")
+			searchResults = append(searchResults, []string{payload})
+		}
+
+		genericCore.WriteToLog("searchLogsCore.8888")
+		countResults++
+		if countResults > maxResults {
+			genericCore.WriteToLog("searchLogsCore.9999")
+			break // Found positive confirmation, stop scanning
+		}
 	}
 
-	genericCore.WriteToLog("searchLogsCore.6666")
-
-	genericCore.WriteToLog("searchLogsCore.7777")
-	return sampleLog, true
+	genericCore.WriteToLog("searchLogsCore.AAAA")
+	return "Found Xid Errors", searchResults, true
 }
 
 /*
@@ -485,7 +548,7 @@ func getGceInstanceIdFromInstanceName(instName string, projectId string, zone st
 }
 */
 
-func getGceInstanceForPod(podName string) (string, bool) {
+func getGceInstanceForPod(podName string) string {
 	// hard coded fix later
 	namespace := "default"
 
@@ -497,11 +560,11 @@ func getGceInstanceForPod(podName string) (string, bool) {
 	// 1. Get the Pod object
 	pod, err := clientset.CoreV1().Pods(namespace).Get(context.TODO(), podName, metav1.GetOptions{})
 	if err != nil {
-		return "Could not get node name for pod " + podName, false
+		genericCore.WriteToLog("Could not find instance name for pod " + podName + " . error message: " + fmt.Sprintf("%v", err))
+		return ""
 	}
 
 	nodeName := pod.Spec.NodeName
-	fmt.Printf("Pod %s is running on Node: %s\n", podName, nodeName)
 
 	// 2. Get the Node object to find the GCE ProviderID
 	//node, err := clientset.CoreV1().Nodes().Get(context.TODO(), nodeName, metav1.GetOptions{})
@@ -509,9 +572,11 @@ func getGceInstanceForPod(podName string) (string, bool) {
 	//	panic(err)
 	//}
 
+	genericCore.WriteToLog("getGceInstanceForPod.3333 pod: " + podName + " nodeName: " + nodeName)
+
 	// The ProviderID format is: gce://project-id/zone/instance-name
 	//fmt.Printf("GCE Provider ID: %s\n", node.Spec.ProviderID)
-	return nodeName, true
+	return nodeName
 }
 
 func parseXidNumber(logLine string) string {
