@@ -996,8 +996,6 @@ func runNCCLOrDCGMTestsCore(h *handlers, ctx context.Context, request *RunCluste
 		jobType,
 		machineType, partitionName, projectID)
 
-	jobObj.JobType = jobType
-
 	// Create the file with the specified flags and permissions
 	localScriptName := LOCAL_HOST_SCRATCH_DIR + "/" + persistence.CDMCP_SHELL_SCRIPT_NAME
 	file, err := os.OpenFile(localScriptName, flags, permissions)
