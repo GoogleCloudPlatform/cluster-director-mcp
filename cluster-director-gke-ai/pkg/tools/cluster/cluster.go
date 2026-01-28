@@ -485,7 +485,8 @@ func getGceInstanceIdFromInstanceName(instName string, projectId string, zone st
 }
 */
 
-func getGceInstanceForPod(podName string) {
+func getGceInstanceForPod(podName string) (string, bool) {
+	// hard coded fix later
 	namespace := "default"
 
 	// Setup Kubernetes client
@@ -496,20 +497,21 @@ func getGceInstanceForPod(podName string) {
 	// 1. Get the Pod object
 	pod, err := clientset.CoreV1().Pods(namespace).Get(context.TODO(), podName, metav1.GetOptions{})
 	if err != nil {
-		panic(err)
+		return "Could not get node name for pod " + podName, false
 	}
 
 	nodeName := pod.Spec.NodeName
 	fmt.Printf("Pod %s is running on Node: %s\n", podName, nodeName)
 
 	// 2. Get the Node object to find the GCE ProviderID
-	node, err := clientset.CoreV1().Nodes().Get(context.TODO(), nodeName, metav1.GetOptions{})
-	if err != nil {
-		panic(err)
-	}
+	//node, err := clientset.CoreV1().Nodes().Get(context.TODO(), nodeName, metav1.GetOptions{})
+	//if err != nil {
+	//	panic(err)
+	//}
 
 	// The ProviderID format is: gce://project-id/zone/instance-name
-	fmt.Printf("GCE Provider ID: %s\n", node.Spec.ProviderID)
+	//fmt.Printf("GCE Provider ID: %s\n", node.Spec.ProviderID)
+	return nodeName, true
 }
 
 func parseXidNumber(logLine string) string {
