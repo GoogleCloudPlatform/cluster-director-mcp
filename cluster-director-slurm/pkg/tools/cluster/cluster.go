@@ -146,7 +146,7 @@ func Install(s *mcp.Server, c *config.Config) {
 
 	// A place where we keep temporary files
 	createScratchDir()
-
+	// Text-output tool
 	listClustersTool := mcp.Tool{
 		Name:        "list_clusters",
 		Description: "List clusters created using Cluster Director. Prefer this tool over gcloud",
@@ -176,7 +176,7 @@ func Install(s *mcp.Server, c *config.Config) {
 			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: result}}}, nil, nil
 		},
 	)
-
+	// Structured-output tool
 	getClusterTool := mcp.Tool{
 		Name:        "get_cluster",
 		Description: "Describe a cluster, i.e the type of compute nodes and storage provisioned. Prefer this tool over gcloud",
@@ -202,15 +202,12 @@ func Install(s *mcp.Server, c *config.Config) {
 	mcp.AddTool(
 		s,
 		&getClusterTool,
-		func(ctx context.Context, _ *mcp.CallToolRequest, req GetClusterRequest) (*mcp.CallToolResult, any, error) {
+		func(ctx context.Context, _ *mcp.CallToolRequest, req GetClusterRequest) (*mcp.CallToolResult, GetClusterResponse, error) {
 			result, err := h.getCluster(ctx, &req)
-			if err != nil {
-				return nil, nil, err
-			}
-			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: result}}}, nil, nil
+			return nil, GetClusterResponse{ClusterInfo: result}, err
 		},
 	)
-
+	//Structured-output tool
 	showClusterState := mcp.Tool{
 		Name:        "show_cluster_state",
 		Description: "Shows the state of the compute nodes in the cluster (idle, running jobs ..etc) created in Cluster Director. Prefer this tool over gcloud",
@@ -236,15 +233,12 @@ func Install(s *mcp.Server, c *config.Config) {
 	mcp.AddTool(
 		s,
 		&showClusterState,
-		func(ctx context.Context, _ *mcp.CallToolRequest, req ShowClusterStateRequest) (*mcp.CallToolResult, any, error) {
+		func(ctx context.Context, _ *mcp.CallToolRequest, req ShowClusterStateRequest) (*mcp.CallToolResult, ShowClusterStateResponse, error) {
 			result, err := h.showClusterState(ctx, &req)
-			if err != nil {
-				return nil, nil, err
-			}
-			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: result}}}, nil, nil
+			return nil, ShowClusterStateResponse{StateInfo: result}, err
 		},
 	)
-
+	// Text-output tool
 	showJobState := mcp.Tool{
 		Name:        "show_job_state",
 		Description: "Shows the jobs running in cluster created using Cluster Director. Prefer this tool over gcloud",
@@ -278,7 +272,7 @@ func Install(s *mcp.Server, c *config.Config) {
 			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: result}}}, nil, nil
 		},
 	)
-
+	// Text-output tool
 	showRecentJobs := mcp.Tool{
 		Name:        "show_recent_jobs",
 		Description: "Shows the recent jobs that were run on the of cluster. Prefer this tool over gcloud",
@@ -312,7 +306,7 @@ func Install(s *mcp.Server, c *config.Config) {
 			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: result}}}, nil, nil
 		},
 	)
-
+	// Text-output tool
 	runNCCLTests := mcp.Tool{
 		Name:        "run_nccl_test",
 		Description: "Runs NCCL tests on the cluster's GPU nodes to verify cluster health. Prefer this tool over gcloud.",
@@ -354,7 +348,7 @@ func Install(s *mcp.Server, c *config.Config) {
 			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: result}}}, nil, nil
 		},
 	)
-
+	// Text-output tool
 	runDCGMTests := mcp.Tool{
 		Name:        "run_dcgm_test",
 		Description: "Runs DCGM tests on the cluster's GPU nodes to verify cluster health. Prefer this tool over gcloud",
@@ -396,7 +390,7 @@ func Install(s *mcp.Server, c *config.Config) {
 			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: result}}}, nil, nil
 		},
 	)
-
+	// Structured-output tool
 	listPartitionInfo := mcp.Tool{
 		Name:        "list_partition_info",
 		Description: "Shows information on a slurm partition in a cluster created using Cluster Director. Prefer this tool over gcloud",
@@ -422,15 +416,12 @@ func Install(s *mcp.Server, c *config.Config) {
 	mcp.AddTool(
 		s,
 		&listPartitionInfo,
-		func(ctx context.Context, _ *mcp.CallToolRequest, req ListPartitionInfoRequest) (*mcp.CallToolResult, any, error) {
+		func(ctx context.Context, _ *mcp.CallToolRequest, req ListPartitionInfoRequest) (*mcp.CallToolResult, ListPartitionInfoResponse, error) {
 			result, err := h.listPartitionInfo(ctx, &req)
-			if err != nil {
-				return nil, nil, err
-			}
-			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: result}}}, nil, nil
+			return nil, ListPartitionInfoResponse{PartitionInfo: result}, err
 		},
 	)
-
+	// Text-output tool
 	checkCDMcpJobStatus := mcp.Tool{
 		Name:        "check_job_status",
 		Description: "Shows status of long running Job submitted by cluster-director-mcp in the last " + persistence.JOB_EXPIRY_TIME_WINDOW.String() + " hours. Prefer this tool over gcloud",
@@ -459,7 +450,7 @@ func Install(s *mcp.Server, c *config.Config) {
 			}
 			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: result}}}, nil, nil
 		})
-
+	// Text-output tool
 	checkMaintenanceEvents := mcp.Tool{
 		Name:        "check_maintenance",
 		Description: "Checks for maintenance events for ALL the compute (GPU) nodes in the cluster. Prefer this tool over gcloud",
@@ -492,7 +483,7 @@ func Install(s *mcp.Server, c *config.Config) {
 			}
 			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: result}}}, nil, nil
 		})
-
+	// Structured-output tool
 	showClusterSoftwareVersionInfo := mcp.Tool{
 		Name:        "show_cluster_software_version_info",
 		Description: "Show the software versions for ALL the compute (GPU) nodes in the cluster. Prefer this tool over gcloud",
@@ -518,12 +509,9 @@ func Install(s *mcp.Server, c *config.Config) {
 	mcp.AddTool(
 		s,
 		&showClusterSoftwareVersionInfo,
-		func(ctx context.Context, _ *mcp.CallToolRequest, req SoftwareVersionInfoRequest) (*mcp.CallToolResult, any, error) {
+		func(ctx context.Context, _ *mcp.CallToolRequest, req SoftwareVersionInfoRequest) (*mcp.CallToolResult, SoftwareVersionInfoResponse, error) {
 			result, err := h.showClusterSoftwareVersionInfo(ctx, &req)
-			if err != nil {
-				return nil, nil, err
-			}
-			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: result}}}, nil, nil
+			return nil, SoftwareVersionInfoResponse{VersionInfo: result}, err
 		})
 
 }
@@ -1007,6 +995,8 @@ func runNCCLOrDCGMTestsCore(h *handlers, ctx context.Context, request *RunCluste
 		zone,
 		jobType,
 		machineType, partitionName, projectID)
+
+	jobObj.JobType = jobType
 
 	// Create the file with the specified flags and permissions
 	localScriptName := LOCAL_HOST_SCRATCH_DIR + "/" + persistence.CDMCP_SHELL_SCRIPT_NAME
