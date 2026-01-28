@@ -48,8 +48,6 @@ func AnalyzeJobLog(jobType persistence.LONG_RUNNING_OPERATION, logContent string
 			status = persistence.Completed
 			result = persistence.SUCCESS
 
-			// --- FIX: Parse and Aggregate instead of dumping raw log ---
-
 			// 1. Parse the raw srun output into a map of Hostname -> Output
 			nodeResults := parseVersionCheckLog(logContent)
 
@@ -72,7 +70,6 @@ func AnalyzeJobLog(jobType persistence.LONG_RUNNING_OPERATION, logContent string
 				sb.WriteString(fmt.Sprintf("--- Nodes: %s ---\n%s\n\n", nodes, output))
 			}
 			summary = sb.String()
-			// -----------------------------------------------------------
 
 		} else if strings.Contains(logContent, "Version Check Completed Successfully!") {
 			// Fallback for older script versions
