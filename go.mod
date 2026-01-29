@@ -3,7 +3,6 @@ module cluster-director-mcp
 go 1.25.0
 
 require (
-	cloud.google.com/go/compute v1.40.0
 	cloud.google.com/go/logging v1.13.0
 	github.com/modelcontextprotocol/go-sdk v1.1.0
 	github.com/spf13/cobra v1.9.1
