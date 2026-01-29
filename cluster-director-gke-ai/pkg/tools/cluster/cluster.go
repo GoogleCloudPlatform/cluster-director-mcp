@@ -202,7 +202,7 @@ func Install(s *mcp.Server, c *config.Config) {
 
 	searchXidGkeClusters := mcp.Tool{
 		Name:        "search_xid_in_gke_clusters",
-		Description: "Search GCP GKE Cluster logs for Xid errors for a specified job",
+		Description: "Debug slowness in running job on a GCP GKE Cluster",
 		Annotations: &mcp.ToolAnnotations{
 			ReadOnlyHint:   true,
 			IdempotentHint: true,
@@ -240,7 +240,10 @@ func Install(s *mcp.Server, c *config.Config) {
 		s,
 		&searchXidGkeClusters,
 		func(ctx context.Context, _ *mcp.CallToolRequest, req SearchLogsRequestXidGkeClusters) (*mcp.CallToolResult, SearchLogsResponse, error) {
-			result, err := h.searchLogsMCP(ctx, &req, WereThereXidFailureMessagesInGkeCluster)
+			result, foundsIssues, err := h.searchLogsMCP(ctx, &req, WereThereXidFailureMessagesInGkeCluster)
+			if foundsIssues {
+				result += ". Your job is possibly slow because we found Xid errors on the nodes running it"
+			}
 			return nil, SearchLogsResponse{Status: result}, err
 		},
 	)
@@ -248,11 +251,11 @@ func Install(s *mcp.Server, c *config.Config) {
 }
 
 // func (h *handlers) searchLogsMCP(ctx context.Context, request *SearchLogsRequest, searchType LogSearchType) (string, error) {
-func (h *handlers) searchLogsMCP(ctx context.Context, request *SearchLogsRequestXidGkeClusters, searchType LogSearchType) (string, error) {
+func (h *handlers) searchLogsMCP(ctx context.Context, request *SearchLogsRequestXidGkeClusters, searchType LogSearchType) (string, bool, error) {
 	genericCore.WriteToLog("searchLogsMCP.0000")
 	projectID := h.c.GetDefaultProjectID()
 	if projectID == "" {
-		return "Could not determine GCP project. Please run: gcloud config set project \"your-project-name\" and restart the AI Assistant", nil
+		return "Could not determine GCP project. Please run: gcloud config set project \"your-project-name\" and restart the AI Assistant", false, nil
 	}
 
 	genericCore.WriteToLog("searchLogsMCP.0000.AAAA")
@@ -283,11 +286,11 @@ func (h *handlers) searchLogsMCP(ctx context.Context, request *SearchLogsRequest
 
 		if jobName == "" {
 			genericCore.WriteToLog("searchLogsMCP.1111.CCCC")
-			return "JobName is required", nil
+			return "JobName is required", false, nil
 		}
 		if clusterName == "" {
 			genericCore.WriteToLog("searchLogsMCP.1111.DDDD")
-			return "ClusterName is required", nil
+			return "ClusterName is required", false, nil
 		}
 	}
 
@@ -354,7 +357,7 @@ func (h *handlers) searchLogsMCP(ctx context.Context, request *SearchLogsRequest
 			if clusterName != "" {
 				filter += fmt.Sprintf(` AND resource.labels.cluster_name="%s"`, clusterName)
 			}
-			return "Success", nil
+			return "Success", false, nil
 		}
 		genericCore.WriteToLog("searchLogsMCP.2222.KKKK . filter: " + filter)
 	}
@@ -368,7 +371,7 @@ func (h *handlers) searchLogsMCP(ctx context.Context, request *SearchLogsRequest
 
 	if !logSearchSuccess {
 		genericCore.WriteToLog("searchLogsMCP.3333.CCCC")
-		return retMesgStr, nil
+		return retMesgStr, false, nil
 	}
 
 	if searchType == WereThereXidFailureMessagesInGkeCluster {
@@ -395,7 +398,11 @@ func (h *handlers) searchLogsMCP(ctx context.Context, request *SearchLogsRequest
 					}
 				}
 			*/
-			return doInstanceLogsHaveXidErrors(returnResults, h, ctx, projectID), nil
+			if len(returnResults) != 0 {
+				return doInstanceLogsHaveXidErrors(returnResults, h, ctx, projectID), true, nil
+			} else {
+				return doInstanceLogsHaveXidErrors(returnResults, h, ctx, projectID), false, nil
+			}
 		}
 	} else if searchType == AreNCCLDebugLogsEnabled {
 		if logSearchSuccess {
@@ -423,7 +430,7 @@ func (h *handlers) searchLogsMCP(ctx context.Context, request *SearchLogsRequest
 		}
 	}
 
-	return retMesgStr, nil
+	return retMesgStr, false, nil
 }
 
 func doInstanceLogsHaveXidErrors(searchResults [][]string, h *handlers, ctx context.Context, projectID string) string {
@@ -445,7 +452,7 @@ func doInstanceLogsHaveXidErrors(searchResults [][]string, h *handlers, ctx cont
 	resultStr, xidResults, success := searchLogsCore(h, ctx, projectID, filter, 1, WereThereXidFailureMessagesInGceInstance)
 
 	if success {
-		t := fmt.Sprintf("Found %s Xid errors in %s GCE instances", len(xidResults), len(searchResults))
+		t := fmt.Sprintf("Found %v Xid errors in %v GCE instances", len(xidResults), len(searchResults))
 		genericCore.WriteToLog("doInstanceLogsHaveXidErrors.4444 : " + t)
 		return t
 	} else {
