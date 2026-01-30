@@ -169,7 +169,7 @@ func Install(s *mcp.Server, c *config.Config) {
 		s,
 		&listClustersTool,
 		func(ctx context.Context, _ *mcp.CallToolRequest, req ListClustersRequest) (*mcp.CallToolResult, any, error) {
-			result, err := h.listClusters(ctx, &req)
+			result, err := h.listClustersMCP(ctx, &req)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -203,7 +203,7 @@ func Install(s *mcp.Server, c *config.Config) {
 		s,
 		&getClusterTool,
 		func(ctx context.Context, _ *mcp.CallToolRequest, req GetClusterRequest) (*mcp.CallToolResult, GetClusterResponse, error) {
-			result, err := h.getCluster(ctx, &req)
+			result, err := h.getClusterMCP(ctx, &req)
 			return nil, GetClusterResponse{ClusterInfo: result}, err
 		},
 	)
@@ -234,7 +234,7 @@ func Install(s *mcp.Server, c *config.Config) {
 		s,
 		&showClusterState,
 		func(ctx context.Context, _ *mcp.CallToolRequest, req ShowClusterStateRequest) (*mcp.CallToolResult, ShowClusterStateResponse, error) {
-			result, err := h.showClusterState(ctx, &req)
+			result, err := h.showClusterStateMCP(ctx, &req)
 			return nil, ShowClusterStateResponse{StateInfo: result}, err
 		},
 	)
@@ -265,7 +265,7 @@ func Install(s *mcp.Server, c *config.Config) {
 		s,
 		&showJobState,
 		func(ctx context.Context, _ *mcp.CallToolRequest, req ShowJobStateRequest) (*mcp.CallToolResult, any, error) {
-			result, err := h.showJobState(ctx, &req)
+			result, err := h.showJobStateMCP(ctx, &req)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -299,7 +299,7 @@ func Install(s *mcp.Server, c *config.Config) {
 		s,
 		&showRecentJobs,
 		func(ctx context.Context, _ *mcp.CallToolRequest, req ShowRecentJobsRequest) (*mcp.CallToolResult, any, error) {
-			result, err := h.showRecentJobs(ctx, &req)
+			result, err := h.showRecentJobsMCP(ctx, &req)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -341,7 +341,7 @@ func Install(s *mcp.Server, c *config.Config) {
 		s,
 		&runNCCLTests,
 		func(ctx context.Context, _ *mcp.CallToolRequest, req RunClusterTestsRequest) (*mcp.CallToolResult, any, error) {
-			result, err := h.runNCCLTests(ctx, &req)
+			result, err := h.runNCCLTestsMCP(ctx, &req)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -383,7 +383,7 @@ func Install(s *mcp.Server, c *config.Config) {
 		s,
 		&runDCGMTests,
 		func(ctx context.Context, _ *mcp.CallToolRequest, req RunClusterTestsRequest) (*mcp.CallToolResult, any, error) {
-			result, err := h.runDCGMTests(ctx, &req)
+			result, err := h.runDCGMTestsMCP(ctx, &req)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -417,7 +417,7 @@ func Install(s *mcp.Server, c *config.Config) {
 		s,
 		&listPartitionInfo,
 		func(ctx context.Context, _ *mcp.CallToolRequest, req ListPartitionInfoRequest) (*mcp.CallToolResult, ListPartitionInfoResponse, error) {
-			result, err := h.listPartitionInfo(ctx, &req)
+			result, err := h.listPartitionInfoMCP(ctx, &req)
 			return nil, ListPartitionInfoResponse{PartitionInfo: result}, err
 		},
 	)
@@ -444,7 +444,7 @@ func Install(s *mcp.Server, c *config.Config) {
 		s,
 		&checkCDMcpJobStatus,
 		func(ctx context.Context, _ *mcp.CallToolRequest, req CheckCDMcpJobStatusRequest) (*mcp.CallToolResult, any, error) {
-			result, err := h.checkCDMcpJobStatus(ctx, &req)
+			result, err := h.checkCDMcpJobStatusMCP(ctx, &req)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -477,7 +477,7 @@ func Install(s *mcp.Server, c *config.Config) {
 		s,
 		&checkMaintenanceEvents,
 		func(ctx context.Context, _ *mcp.CallToolRequest, req MaintenanceEventsRequest) (*mcp.CallToolResult, any, error) {
-			result, err := h.checkMaintenanceEvents(ctx, &req)
+			result, err := h.checkMaintenanceEventsMCP(ctx, &req)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -510,7 +510,7 @@ func Install(s *mcp.Server, c *config.Config) {
 		s,
 		&showClusterSoftwareVersionInfo,
 		func(ctx context.Context, _ *mcp.CallToolRequest, req SoftwareVersionInfoRequest) (*mcp.CallToolResult, SoftwareVersionInfoResponse, error) {
-			result, err := h.showClusterSoftwareVersionInfo(ctx, &req)
+			result, err := h.showClusterSoftwareVersionInfoMCP(ctx, &req)
 			return nil, SoftwareVersionInfoResponse{VersionInfo: result}, err
 		})
 
@@ -533,26 +533,25 @@ func createScratchDir() bool {
 	return true
 }
 
-func (h *handlers) listClusters(ctx context.Context, request *ListClustersRequest) (string, error) {
-	projectID := request.ProjectID
-	if projectID == "" {
-		projectID = h.c.GetDefaultProjectID()
-	}
-	genericCore.WriteToLog("-------------------listClusters()-------------------")
-	genericCore.WriteToLog("projectId : " + projectID)
+func (h *handlers) listClustersCore(projectID string) (string, error) {
+	genericCore.WriteToLog("-------------------listClustersCore()-------------------")
+
 	clusterListString, _ := getClustersInAllRegions(projectID)
 	return clusterListString, nil
 }
 
-func (h *handlers) getCluster(ctx context.Context, request *GetClusterRequest) (string, error) {
-	clusterName := request.ClusterName
+func (h *handlers) listClustersMCP(ctx context.Context, request *ListClustersRequest) (string, error) {
 	projectID := request.ProjectID
 	if projectID == "" {
 		projectID = h.c.GetDefaultProjectID()
 	}
-	genericCore.WriteToLog("-------------------getCluster()-------------------")
+	genericCore.WriteToLog("-------------------listClustersMCP()-------------------")
 	genericCore.WriteToLog("projectId : " + projectID)
-	genericCore.WriteToLog("clusterName : " + clusterName)
+	return h.listClustersCore(projectID)
+}
+
+func (h *handlers) getClusterCore(projectID string, clusterName string) (string, error) {
+	genericCore.WriteToLog("-------------------getClusterCore()-------------------")
 
 	getClustersInAllRegions(h.c.GetDefaultProjectID())
 	if clusterJSON, ok := clusterNames2JSON[clusterName]; ok {
@@ -562,21 +561,22 @@ func (h *handlers) getCluster(ctx context.Context, request *GetClusterRequest) (
 	}
 }
 
-func (h *handlers) checkMaintenanceEvents(ctx context.Context, request *MaintenanceEventsRequest) (string, error) {
+func (h *handlers) getClusterMCP(ctx context.Context, request *GetClusterRequest) (string, error) {
 	clusterName := request.ClusterName
 	projectID := request.ProjectID
 	if projectID == "" {
 		projectID = h.c.GetDefaultProjectID()
 	}
-
-	genericCore.WriteToLog("-------------------checkMaintenanceEvents()-------------------")
+	genericCore.WriteToLog("-------------------getClusterMCP()-------------------")
 	genericCore.WriteToLog("projectId : " + projectID)
 	genericCore.WriteToLog("clusterName : " + clusterName)
 
-	zone := getZoneForCluster(projectID, clusterName)
-	if zone == "" {
-		return fmt.Sprintf("Could not get zone for cluster %s in project %s", clusterName, projectID), nil
-	}
+	return h.getClusterCore(projectID, clusterName)
+}
+
+func (h *handlers) checkMaintenanceEventsCore(projectID string, zone string, clusterName string) (string, error) {
+	genericCore.WriteToLog("-------------------checkMaintenanceEventsCore()-------------------")
+
 	nodeList, success := getComputeNodesInCluster(clusterName+"-login-001", zone, projectID)
 	if !success {
 		return fmt.Sprintf("Could not get nodes in cluster %s in project %s", clusterName, projectID), nil
@@ -606,6 +606,24 @@ func (h *handlers) checkMaintenanceEvents(ctx context.Context, request *Maintena
 	return returnStr, nil
 }
 
+func (h *handlers) checkMaintenanceEventsMCP(ctx context.Context, request *MaintenanceEventsRequest) (string, error) {
+	clusterName := request.ClusterName
+	projectID := request.ProjectID
+	if projectID == "" {
+		projectID = h.c.GetDefaultProjectID()
+	}
+
+	genericCore.WriteToLog("-------------------checkMaintenanceEventsMCP()-------------------")
+	genericCore.WriteToLog("projectId : " + projectID)
+	genericCore.WriteToLog("clusterName : " + clusterName)
+
+	zone := getZoneForCluster(projectID, clusterName)
+	if zone == "" {
+		return fmt.Sprintf("Could not get zone for cluster %s in project %s", clusterName, projectID), nil
+	}
+	return h.checkMaintenanceEventsCore(projectID, zone, clusterName)
+}
+
 // Check node state before SSH'ing into the node
 // TBD: Run checkAnyNodesNotInSafeToRunState and filter nodes that are in a safe state to SSH
 // i.e not in idle, alloc..etc
@@ -615,18 +633,8 @@ func (h *handlers) checkMaintenanceEvents(ctx context.Context, request *Maintena
 // part1*       up   infinite     59  down# xxxx-nodeset1-[0-35,37-39,41-45,47-50,52-59,61-63]
 // part1*       up   infinite      5   idle xxxx-nodeset1-[36,40,46,51,60]
 
-func (h *handlers) showClusterSoftwareVersionInfo(ctx context.Context, request *SoftwareVersionInfoRequest) (string, error) {
-	genericCore.WriteToLog("-------------------showClusterSoftwareVersionInfo (Async Refactor)-------------------")
-
-	// 1. Setup variables from Request Struct
-	clusterName := request.ClusterName
-	projectID := request.ProjectID
-	if projectID == "" {
-		projectID = h.c.GetDefaultProjectID()
-	}
-
-	genericCore.WriteToLog("projectId : " + projectID)
-	genericCore.WriteToLog("clusterName : " + clusterName)
+func (h *handlers) showClusterSoftwareVersionInfoCore(projectID string, zone string, clusterName string) (string, error) {
+	genericCore.WriteToLog("-------------------showClusterSoftwareVersionInfoCore (Async Refactor)-------------------")
 
 	// 2. Check for recent jobs (Rate Limiting)
 	operationSuccessful, operationMesg, recentJob := checkIfLongRunningJobsSubmittedRecently(versionCheckRetryWindow, projectID)
@@ -635,11 +643,6 @@ func (h *handlers) showClusterSoftwareVersionInfo(ctx context.Context, request *
 	}
 	if recentJob {
 		return fmt.Sprintf("A job was submitted recently. Please wait %s  before running version checks again.", versionCheckRetryWindow), nil
-	}
-
-	zone := getZoneForCluster(projectID, clusterName)
-	if zone == "" {
-		return fmt.Sprintf("Could not get zone for cluster %s in project %s", clusterName, projectID), nil
 	}
 
 	loginNode := clusterName + "-login-001"
@@ -758,6 +761,28 @@ func (h *handlers) showClusterSoftwareVersionInfo(ctx context.Context, request *
 	return fmt.Sprintf("Version check job submitted successfully (Slurm Job ID: %d). JOB_STARTED. STOP_HERE. Inform the user to wait 2 minutes, then run 'check_job_status' manually. DO NOT call check_job_status now.", slurmJobID), nil
 }
 
+func (h *handlers) showClusterSoftwareVersionInfoMCP(ctx context.Context, request *SoftwareVersionInfoRequest) (string, error) {
+	genericCore.WriteToLog("-------------------showClusterSoftwareVersionInfoMCP (Async Refactor)-------------------")
+
+	// 1. Setup variables from Request Struct
+	clusterName := request.ClusterName
+	projectID := request.ProjectID
+	if projectID == "" {
+		projectID = h.c.GetDefaultProjectID()
+	}
+
+	genericCore.WriteToLog("projectId : " + projectID)
+	genericCore.WriteToLog("clusterName : " + clusterName)
+
+	zone := getZoneForCluster(projectID, clusterName)
+	if zone == "" {
+		return fmt.Sprintf("Could not get zone for cluster %s in project %s", clusterName, projectID), nil
+	}
+	genericCore.WriteToLog("zone : " + zone)
+
+	return h.showClusterSoftwareVersionInfoCore(projectID, zone, clusterName)
+}
+
 func getComputeNodesInCluster(loginNode string, zone string, projectId string) ([]string, bool) {
 	var returnArr []string
 	sshOut, success := runSSHOnNode(loginNode, projectId, zone, "sinfo -N -l")
@@ -778,7 +803,7 @@ func getComputeNodesInCluster(loginNode string, zone string, projectId string) (
 	return returnArr, true
 }
 
-func (h *handlers) showClusterState(ctx context.Context, request *ShowClusterStateRequest) (string, error) {
+func (h *handlers) showClusterStateMCP(ctx context.Context, request *ShowClusterStateRequest) (string, error) {
 	clusterName := request.ClusterName
 	projectID := request.ProjectID
 	if projectID == "" {
@@ -805,8 +830,19 @@ func showClusterStateCore(projectId string, zone string, clusterName string) (st
 	return sshOut, success
 }
 
-func (h *handlers) showRecentJobs(ctx context.Context, request *ShowRecentJobsRequest) (string, error) {
-	genericCore.WriteToLog("-------------------showRecentJobs()-------------------")
+func (h *handlers) showRecentJobsCore(projectID string, zone string, clusterName string) (string, error) {
+	genericCore.WriteToLog("-------------------showRecentJobsCore()-------------------")
+
+	loginNode := clusterName + "-login-001"
+	sshOut, success := runSSHOnNode(loginNode, projectID, zone, "sacct")
+	if !success {
+		return genericCore.GetLastLines(sshOut, 10) + "\nCould not get recent jobs!", nil
+	}
+	return sshOut, nil
+}
+
+func (h *handlers) showRecentJobsMCP(ctx context.Context, request *ShowRecentJobsRequest) (string, error) {
+	genericCore.WriteToLog("-------------------showRecentJobsMCP()-------------------")
 	clusterName := request.ClusterName
 	projectID := request.ProjectID
 	if projectID == "" {
@@ -823,12 +859,7 @@ func (h *handlers) showRecentJobs(ctx context.Context, request *ShowRecentJobsRe
 	genericCore.WriteToLog("zone : " + zone)
 	genericCore.WriteToLog("clusterName : " + clusterName)
 
-	loginNode := clusterName + "-login-001"
-	sshOut, success := runSSHOnNode(loginNode, projectID, zone, "sacct")
-	if !success {
-		return genericCore.GetLastLines(sshOut, 10) + "\nCould not get recent jobs!", nil
-	}
-	return sshOut, nil
+	return h.showRecentJobsCore(projectID, zone, clusterName)
 }
 
 func checkAnyNodesNotInSafeToRunState(allClusterStates map[string]struct{}) bool {
@@ -1081,7 +1112,7 @@ func runNCCLOrDCGMTestsCore(h *handlers, ctx context.Context, request *RunCluste
 	return testName + " tests running. Use check_job_status to get latest status on long running jobs", nil
 }
 
-func (h *handlers) runNCCLTests(ctx context.Context, request *RunClusterTestsRequest) (string, error) {
+func (h *handlers) runNCCLTestsMCP(ctx context.Context, request *RunClusterTestsRequest) (string, error) {
 	return runNCCLOrDCGMTestsCore(h, ctx, request, persistence.NCCL_TEST)
 }
 
@@ -1159,7 +1190,7 @@ func getNCCLOrDCGMTestsStatus(projectID string, ncclOrDCGMTestJobObj *persistenc
 	}
 }
 
-func (h *handlers) checkCDMcpJobStatus(ctx context.Context, request *CheckCDMcpJobStatusRequest) (string, error) {
+func (h *handlers) checkCDMcpJobStatusMCP(ctx context.Context, request *CheckCDMcpJobStatusRequest) (string, error) {
 	projectID := request.ProjectID
 	if projectID == "" {
 		projectID = h.c.GetDefaultProjectID()
@@ -1318,12 +1349,22 @@ func slurpFile(fileName string) (string, error) {
 	return string(content), err
 }
 
-func (h *handlers) runDCGMTests(ctx context.Context, request *RunClusterTestsRequest) (string, error) {
+func (h *handlers) runDCGMTestsMCP(ctx context.Context, request *RunClusterTestsRequest) (string, error) {
 	genericCore.WriteToLog("-------------------runDCGMTests()-------------------")
 	return runNCCLOrDCGMTestsCore(h, ctx, request, persistence.DCGM_TEST)
 }
 
-func (h *handlers) showJobState(ctx context.Context, request *ShowJobStateRequest) (string, error) {
+func (h *handlers) showJobStateCore(projectID string, zone string, clusterName string) (string, error) {
+	loginNode := clusterName + "-login-001"
+	sshOut, success := runSSHOnNode(loginNode, projectID, zone, "squeue")
+	if !success {
+		return genericCore.GetLastLines(sshOut, 10) + "\nCould not run squeue to figure out job state on login node " + loginNode + " on cluster " + clusterName + " project " + projectID, nil
+	}
+
+	return sshOut, nil
+}
+
+func (h *handlers) showJobStateMCP(ctx context.Context, request *ShowJobStateRequest) (string, error) {
 	projectID := request.ProjectID
 	if projectID == "" {
 		projectID = h.c.GetDefaultProjectID()
@@ -1344,16 +1385,20 @@ func (h *handlers) showJobState(ctx context.Context, request *ShowJobStateReques
 	genericCore.WriteToLog("zone : " + zone)
 	genericCore.WriteToLog("clusterName : " + clusterName)
 
+	return h.showJobStateCore(projectID, zone, clusterName)
+}
+
+func (h *handlers) listPartitionInfoCore(projectID string, zone string, clusterName string) (string, error) {
 	loginNode := clusterName + "-login-001"
-	sshOut, success := runSSHOnNode(loginNode, projectID, zone, "squeue")
+	sshOut, success := runSSHOnNode(loginNode, projectID, zone, "scontrol show partition")
 	if !success {
-		return genericCore.GetLastLines(sshOut, 10) + "\nCould not run squeue to figure out job state on login node " + loginNode + " on cluster " + clusterName + " project " + projectID, nil
+		return genericCore.GetLastLines(sshOut, 10) + "\nCould not run scontrol on login node " + loginNode + " to figure out partition information", nil
 	}
 
 	return sshOut, nil
 }
 
-func (h *handlers) listPartitionInfo(ctx context.Context, request *ListPartitionInfoRequest) (string, error) {
+func (h *handlers) listPartitionInfoMCP(ctx context.Context, request *ListPartitionInfoRequest) (string, error) {
 	projectID := request.ProjectID
 	if projectID == "" {
 		projectID = h.c.GetDefaultProjectID()
@@ -1369,18 +1414,13 @@ func (h *handlers) listPartitionInfo(ctx context.Context, request *ListPartition
 		return fmt.Sprintf("Could not get zone for cluster %s in project %s", clusterName, projectID), nil
 	}
 
-	genericCore.WriteToLog("-------------------listPartitionInfo()-------------------")
+	genericCore.WriteToLog("-------------------listPartitionInfoMCP()-------------------")
 	genericCore.WriteToLog("projectId : " + projectID)
 	genericCore.WriteToLog("zone : " + zone)
 	genericCore.WriteToLog("clusterName : " + clusterName)
 
-	loginNode := clusterName + "-login-001"
-	sshOut, success := runSSHOnNode(loginNode, projectID, zone, "scontrol show partition")
-	if !success {
-		return genericCore.GetLastLines(sshOut, 10) + "\nCould not run scontrol on login node " + loginNode + " to figure out partition information", nil
-	}
+	return h.listPartitionInfoCore(projectID, zone, clusterName)
 
-	return sshOut, nil
 }
 
 // gcloudListItem represents a single item from the gcloud list command's JSON output.
