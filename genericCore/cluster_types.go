@@ -12,23 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package cluster
-
-import (
-	"context"
-	"fmt"
-	"os/exec"
-	"strings"
-
-	"cluster-director-mcp/genericCore"
-	//	compute "google.golang.org/api/compute/v0.alpha"
-	"google.golang.org/api/compute/v1"
-)
-
-var authToken string
+package genericCore
 
 // One-2-Many Mapping, i.e one region maps to a one or more zones
-var regions2Zones = make(map[string][]string)
+var Regions2Zones = make(map[string][]string)
 
 // The root struct that holds information on a list of clusters.
 type ClustersResponse struct {
@@ -38,9 +25,9 @@ type ClustersResponse struct {
 // Key to this map is the clusters region
 var MostRecentClusterData = make(map[string]*ClustersResponse)
 
-var region2ClusterNames = make(map[string][]string)
-var clusterNames2JSON = make(map[string]string)
-var clusterNames2Zone = make(map[string]string)
+var Region2ClusterNames = make(map[string][]string)
+var ClusterNames2JSON = make(map[string]string)
+var ClusterNames2Zone = make(map[string]string)
 
 // Cluster defines the top-level structure of the JSON object returned
 // from Cluster Director API
@@ -150,58 +137,6 @@ type LoginNodes struct {
 type StorageConfig struct {
 	ID         string `json:"id"`
 	LocalMount string `json:"localMount"`
-}
-
-// getGCloudToken executes the 'gcloud auth print-access-token' command
-// and caches the OAuth token.
-func getGCloudToken() bool {
-	if authToken != "" {
-		return true
-	}
-
-	genericCore.WriteToLog("Executing 'gcloud auth print-access-token' to get bearer token...")
-
-	// Prepare the command
-	cmd := exec.Command("gcloud", "auth", "print-access-token")
-
-	// Run the command and capture its output
-	output, err := cmd.Output()
-	if err != nil {
-		// If 'gcloud' is not installed or not in the PATH, this will fail.
-		// It can also fail if the user is not authenticated.
-		genericCore.WriteToLog(fmt.Sprintf("Error running gcloud command: %v", err))
-		return false
-	}
-
-	// The output is a byte slice, so we convert it to a string and
-	// trim any trailing newline or whitespace.
-	authToken = strings.TrimSpace(string(output))
-	genericCore.WriteToLog("Successfully retrieved access token.")
-	return true
-}
-
-func getAllZonesInRegion(region string, projectID string, ctx context.Context, computeService *compute.Service) []string {
-	var zonesList []string
-
-	// The filter string tells the API to return only zones whose region name
-	// matches the one we specified.
-	filter := fmt.Sprintf("name=%s-*", region)
-
-	// Call the Zones.List method with the project ID and the filter.
-	req1 := computeService.Zones.List(projectID).Filter(filter)
-
-	// The 'Do' method handles pagination for you. We process each page of results.
-	if err := req1.Pages(ctx, func(page *compute.ZoneList) error {
-		for _, zone := range page.Items {
-			genericCore.WriteToLog(zone.Name)
-			zonesList = append(zonesList, zone.Name)
-		}
-		return nil
-	}); err != nil {
-		genericCore.WriteToLog(fmt.Sprintf("Error getting zones for project %s in region %s : %v",
-			projectID, region, err))
-	}
-	return zonesList
 }
 
 // Instance holds the parsed data for a single machine.
