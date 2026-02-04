@@ -284,6 +284,45 @@ func Install(s *mcp.Server, c *config.Config) {
 			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: result}}}, nil, nil
 		},
 	)
+
+	getMachinesInResTool := mcp.Tool{
+		Name:        "get_machines_in_reservation",
+		Description: "Identify GCE instances consuming reservations. If no reservation or zone is provided, it automatically scans the project to show total, active, and idle VM counts.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"projectId": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional. GCP project ID. Defaults to the current configured project.",
+				},
+				"zone": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional. Specific zone to scan (e.g., us-central1-a). If omitted, all zones in the project are scanned.",
+				},
+				"reservationName": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional. Name of a specific reservation. If omitted, all reservations are inspected.",
+				},
+			},
+			"required": []string{},
+		},
+	}
+
+	mcp.AddTool(s, &getMachinesInResTool, func(ctx context.Context, _ *mcp.CallToolRequest, req genericCore.GetMachinesInReservationRequest) (*mcp.CallToolResult, any, error) {
+		result, err := genericCore.GetMachinesInReservationMCP(ctx, h.c.GetDefaultProjectID(), req)
+
+		if err != nil {
+			return nil, nil, err
+		}
+
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{
+					Text: result,
+				},
+			},
+		}, nil, nil
+	})
 }
 
 // func (h *handlers) searchLogsMCP(ctx context.Context, request *SearchLogsRequest, searchType LogSearchType) (string, error) {

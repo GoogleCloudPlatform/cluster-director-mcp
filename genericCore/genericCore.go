@@ -476,3 +476,134 @@ func ListReservationsMCP(ctx context.Context, projectID string, zone string) (st
 
 	return result.String(), nil
 }
+
+// GetMachinesInReservationRequest represents the input for the tool
+type GetMachinesInReservationRequest struct {
+	ProjectID       string `json:"projectId,omitempty" jsonschema:"description=GCP project ID. Optional."`
+	Zone            string `json:"zone,omitempty" jsonschema:"description=GCP zone. Optional."`
+	ReservationName string `json:"reservationName,omitempty" jsonschema:"description=Name of the reservation. Optional."`
+}
+
+// ReservationData represents the raw data sent to the AI for analysis
+type ReservationData struct {
+	Zone        string   `json:"zone"`
+	Name        string   `json:"name"`
+	MachineType string   `json:"machineType"`
+	TotalSlots  int      `json:"totalSlots"`
+	ActiveVms   int      `json:"activeVms"`
+	IdleVms     int      `json:"idleVms"`
+	Nodes       []string `json:"nodes,omitempty"`
+}
+
+// GetResourceNameFromURL extracts the last part of a GCP resource URL
+func GetResourceNameFromURL(url string) string {
+	if url == "" {
+		return ""
+	}
+	parts := strings.Split(url, "/")
+	return parts[len(parts)-1]
+}
+
+func GetMachinesInReservationMCP(ctx context.Context, defaultProjectID string, req GetMachinesInReservationRequest) (string, error) {
+	projectID := req.ProjectID
+	if projectID == "" {
+		projectID = defaultProjectID
+	}
+	if projectID == "" {
+		return "", fmt.Errorf("could not determine GCP project. Please specify projectId or ensure gcloud is configured")
+	}
+	return GetMachinesInReservationCore(ctx, projectID, req.Zone, req.ReservationName)
+}
+
+// GetMachinesInReservationCore finds VMs consuming reservations or discovers all if resName is empty.
+func GetMachinesInReservationCore(ctx context.Context, projectID, zone, resName string) (string, error) {
+	service, err := compute.NewService(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to create compute service: %v", err)
+	}
+
+	aggRes, err := service.Reservations.AggregatedList(projectID).Context(ctx).Do()
+	if err != nil {
+		return "", fmt.Errorf("could not list reservations: %v", err)
+	}
+
+	aggInstances, err := service.Instances.AggregatedList(projectID).Filter("status != TERMINATED").Context(ctx).Do()
+	if err != nil {
+		return "", fmt.Errorf("could not list instances: %v", err)
+	}
+
+	var allData []ReservationData
+	foundAny := false
+
+	for zoneKey, scopedResList := range aggRes.Items {
+		currentZone := strings.TrimPrefix(zoneKey, "zones/")
+		if zone != "" && currentZone != zone {
+			continue
+		}
+		var zoneInstances []*compute.Instance
+		if item, ok := aggInstances.Items[zoneKey]; ok {
+			zoneInstances = item.Instances
+		}
+		for _, res := range scopedResList.Reservations {
+			if resName != "" && res.Name != resName {
+				continue
+			}
+			foundAny = true
+			data := buildDataFromReservation(currentZone, res, zoneInstances)
+			allData = append(allData, data)
+		}
+	}
+
+	if !foundAny {
+		return fmt.Sprintf("No reservations found matching scope (Project: %s, Zone: %s, Name: %s).", projectID, zone, resName), nil
+	}
+	jsonData, err := json.Marshal(allData)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal reservation data: %v", err)
+	}
+	return string(jsonData), nil
+}
+
+// buildDataFromReservation calculates metrics and returns a struct for JSON output
+func buildDataFromReservation(zone string, res *compute.Reservation, instances []*compute.Instance) ReservationData {
+	resMachineType := GetResourceNameFromURL(res.SpecificReservation.InstanceProperties.MachineType)
+	totalSlots := int(res.SpecificReservation.Count)
+	activeVms := 0
+	var vmNames []string
+
+	for _, instance := range instances {
+		vmType := GetResourceNameFromURL(instance.MachineType)
+		isMatch := false
+		if res.SpecificReservationRequired {
+			if instance.ReservationAffinity != nil && instance.ReservationAffinity.ConsumeReservationType == "SPECIFIC_RESERVATION" {
+				for _, val := range instance.ReservationAffinity.Values {
+					if val == res.Name {
+						isMatch = true
+						break
+					}
+				}
+			}
+		} else if vmType == resMachineType {
+			if instance.ReservationAffinity == nil || instance.ReservationAffinity.ConsumeReservationType == "ANY_RESERVATION" {
+				isMatch = true
+			}
+		}
+
+		if isMatch {
+			activeVms++
+			vmNames = append(vmNames, instance.Name)
+		}
+	}
+
+	idleVms := totalSlots - activeVms
+
+	return ReservationData{
+		Zone:        zone,
+		Name:        res.Name,
+		MachineType: resMachineType,
+		TotalSlots:  totalSlots,
+		ActiveVms:   activeVms,
+		IdleVms:     idleVms,
+		Nodes:       vmNames,
+	}
+}
