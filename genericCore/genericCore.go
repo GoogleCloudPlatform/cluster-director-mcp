@@ -517,25 +517,20 @@ func GetMachinesInReservationMCP(ctx context.Context, defaultProjectID string, r
 	return GetMachinesInReservationCore(ctx, projectID, req.Zone, req.ReservationName)
 }
 
-// GetMachinesInReservationCore finds VMs consuming reservations and returns a detailed TEXT report matching the schema.
+// GetMachinesInReservationCore finds VMs consuming reservations and returns a detailed TEXT report.
 func GetMachinesInReservationCore(ctx context.Context, projectID, zone, resName string) (string, error) {
 	service, err := compute.NewService(ctx)
 	if err != nil {
 		return "", fmt.Errorf("failed to create compute service: %v", err)
 	}
-
-	// Fetch Reservations
 	aggRes, err := service.Reservations.AggregatedList(projectID).Context(ctx).Do()
 	if err != nil {
 		return "", fmt.Errorf("could not list reservations: %v", err)
 	}
-
-	// Fetch Instances
 	aggInstances, err := service.Instances.AggregatedList(projectID).Filter("status != TERMINATED").Context(ctx).Do()
 	if err != nil {
 		return "", fmt.Errorf("could not list instances: %v", err)
 	}
-
 	var allData []ReservationData
 	foundAny := false
 
@@ -575,44 +570,103 @@ func GetMachinesInReservationCore(ctx context.Context, projectID, zone, resName 
 		report.WriteString(fmt.Sprintf("Status:           %s\n", d.Status))
 		report.WriteString(fmt.Sprintf("Created:          %s\n", d.CreationTimestamp))
 		report.WriteString(fmt.Sprintf("SelfLink:         %s\n", d.SelfLink))
-		if d.Description != "" {
-			report.WriteString(fmt.Sprintf("Description:      %s\n", d.Description))
+
+		desc := d.Description
+		if desc == "" {
+			desc = "None"
 		}
+		report.WriteString(fmt.Sprintf("Description:      %s\n", desc))
 		report.WriteString(fmt.Sprintf("Utilization:      Total: %d | Active: %d | Idle: %d\n", d.TotalSlots, d.ActiveVms, d.IdleVms))
 		if len(d.Nodes) > 0 {
 			report.WriteString(fmt.Sprintf("Active Nodes:     %s\n", strings.Join(d.Nodes, ", ")))
 		}
 		report.WriteString(fmt.Sprintf("Specific Res Req: %v\n", d.SpecificReservationRequired))
-		if d.Commitment != "" {
-			report.WriteString(fmt.Sprintf("Commitment:       %s\n", GetResourceNameFromURL(d.Commitment)))
+		commit := d.Commitment
+		if commit == "" {
+			commit = "None"
+		} else {
+			commit = GetResourceNameFromURL(commit)
 		}
-		if len(d.LinkedCommitments) > 0 {
-			report.WriteString(fmt.Sprintf("Linked Commit:    %v\n", d.LinkedCommitments))
-		}
-		if d.SatisfiesPzs {
-			report.WriteString("Satisfies PZS:    true\n")
-		}
-		if d.SpecificReservation != nil && d.SpecificReservation.InstanceProperties != nil {
-			props := d.SpecificReservation.InstanceProperties
-			report.WriteString(fmt.Sprintf("Machine Type:     %s\n", GetResourceNameFromURL(props.MachineType)))
+		report.WriteString(fmt.Sprintf("Commitment:       %s\n", commit))
 
-			if len(props.GuestAccelerators) > 0 {
-				var accs []string
-				for _, a := range props.GuestAccelerators {
-					accs = append(accs, fmt.Sprintf("%s (x%d)", GetResourceNameFromURL(a.AcceleratorType), a.AcceleratorCount))
-				}
-				report.WriteString(fmt.Sprintf("Accelerators:     %s\n", strings.Join(accs, ", ")))
+		if len(d.LinkedCommitments) > 0 {
+			var cleaned []string
+			for _, lc := range d.LinkedCommitments {
+				cleaned = append(cleaned, GetResourceNameFromURL(lc))
 			}
-			if len(props.LocalSsds) > 0 {
-				report.WriteString(fmt.Sprintf("Local SSDs:       %d attached\n", len(props.LocalSsds)))
-			}
-			if props.MinCpuPlatform != "" {
-				report.WriteString(fmt.Sprintf("Min CPU Plat:     %s\n", props.MinCpuPlatform))
-			}
+			report.WriteString(fmt.Sprintf("Linked Commit:    %v\n", cleaned))
+		} else {
+			report.WriteString("Linked Commit:    None\n")
 		}
+
+		report.WriteString(fmt.Sprintf("Satisfies PZS:    %v\n", d.SatisfiesPzs))
+
+		if d.SpecificReservation != nil {
+			report.WriteString("Type:             Specific SKU\n")
+			if d.SpecificReservation.SourceInstanceTemplate != "" {
+				report.WriteString(fmt.Sprintf("Source Template:  %s\n", d.SpecificReservation.SourceInstanceTemplate))
+			} else {
+				report.WriteString("Source Template:  None\n")
+			}
+
+			if d.SpecificReservation.InstanceProperties != nil {
+				props := d.SpecificReservation.InstanceProperties
+				report.WriteString(fmt.Sprintf("Machine Type:     %s\n", GetResourceNameFromURL(props.MachineType)))
+
+				if len(props.GuestAccelerators) > 0 {
+					var accs []string
+					for _, a := range props.GuestAccelerators {
+						accs = append(accs, fmt.Sprintf("%s (x%d)", GetResourceNameFromURL(a.AcceleratorType), a.AcceleratorCount))
+					}
+					report.WriteString(fmt.Sprintf("Accelerators:     %s\n", strings.Join(accs, ", ")))
+				} else {
+					report.WriteString("Accelerators:     None\n")
+				}
+
+				report.WriteString(fmt.Sprintf("Local SSDs:       %d attached\n", len(props.LocalSsds)))
+
+				minCpu := props.MinCpuPlatform
+				if minCpu == "" {
+					minCpu = "Any"
+				}
+				report.WriteString(fmt.Sprintf("Min CPU Plat:     %s\n", minCpu))
+
+				locHint := props.LocationHint
+				if locHint == "" {
+					locHint = "None"
+				}
+				report.WriteString(fmt.Sprintf("Location Hint:    %s\n", locHint))
+			}
+		} else {
+			report.WriteString("Specific Res:     None (Aggregate)\n")
+		}
+
 		if d.AggregateReservation != nil {
+			report.WriteString("Type:             Aggregate\n")
 			report.WriteString(fmt.Sprintf("Agg. VM Family:   %s\n", d.AggregateReservation.VmFamily))
 			report.WriteString(fmt.Sprintf("Agg. Workload:    %s\n", d.AggregateReservation.WorkloadType))
+
+			if len(d.AggregateReservation.ReservedResources) > 0 {
+				for _, rr := range d.AggregateReservation.ReservedResources {
+					if rr.Accelerator != nil {
+						report.WriteString(fmt.Sprintf("Agg. Reserved:    Accelerator %s (x%d)\n", GetResourceNameFromURL(rr.Accelerator.AcceleratorType), rr.Accelerator.AcceleratorCount))
+					}
+				}
+			} else {
+				report.WriteString("Agg. Reserved:    None\n")
+			}
+			if len(d.AggregateReservation.InUseResources) > 0 {
+				for _, ir := range d.AggregateReservation.InUseResources {
+					if ir.Accelerator != nil {
+						report.WriteString(fmt.Sprintf("Agg. In Use:      Accelerator %s (x%d)\n", GetResourceNameFromURL(ir.Accelerator.AcceleratorType), ir.Accelerator.AcceleratorCount))
+					}
+				}
+			} else {
+				report.WriteString("Agg. In Use:      None\n")
+			}
+		} else {
+			report.WriteString("Agg. VM Family:   N/A (Specific Res)\n")
+			report.WriteString("Agg. Workload:    N/A (Specific Res)\n")
 		}
 		if d.ShareSettings != nil {
 			report.WriteString(fmt.Sprintf("Share Type:       %s\n", d.ShareSettings.ShareType))
@@ -622,42 +676,53 @@ func GetMachinesInReservationCore(ctx context.Context, projectID, zone, resName 
 					projects = append(projects, k)
 				}
 				report.WriteString(fmt.Sprintf("Shared With:      %s\n", strings.Join(projects, ", ")))
+			} else {
+				report.WriteString("Shared With:      None\n")
 			}
+		} else {
+			report.WriteString("Share Settings:   Default\n")
 		}
+
 		if d.ReservationSharingPolicy != nil {
 			report.WriteString(fmt.Sprintf("Service Sharing:  %s\n", d.ReservationSharingPolicy.ServiceShareType))
+		} else {
+			report.WriteString("Service Sharing:  Default\n")
 		}
 		if len(d.ResourcePolicies) > 0 {
-			report.WriteString(fmt.Sprintf("Resource Policies:%v\n", d.ResourcePolicies))
-		}
-		if d.DeploymentType != "" {
-			report.WriteString(fmt.Sprintf("Deployment Type:  %s\n", d.DeploymentType))
+			var policies []string
+			for k, v := range d.ResourcePolicies {
+				policies = append(policies, fmt.Sprintf("%s=%s", k, GetResourceNameFromURL(v)))
+			}
+			report.WriteString(fmt.Sprintf("Resource Policies:%s\n", strings.Join(policies, ", ")))
+		} else {
+			report.WriteString("Resource Policies:None\n")
 		}
 		if d.AdvancedDeploymentControl != nil {
 			report.WriteString(fmt.Sprintf("Adv. Deploy Mode: %s\n", d.AdvancedDeploymentControl.ReservationOperationalMode))
-		}
-		if d.EnableEmergentMaintenance {
-			report.WriteString("Emergent Maint:   Allowed\n")
+		} else {
+			report.WriteString("Adv. Deploy Mode: None\n")
 		}
 		if d.ProtectionTier != "" {
 			report.WriteString(fmt.Sprintf("Protection Tier:  %s\n", d.ProtectionTier))
-		}
-		if d.SchedulingType != "" {
-			report.WriteString(fmt.Sprintf("Scheduling Type:  %s\n", d.SchedulingType))
+		} else {
+			report.WriteString("Protection Tier:  None\n")
 		}
 		if d.ResourceStatus != nil {
 			if d.ResourceStatus.HealthInfo != nil {
 				report.WriteString(fmt.Sprintf("Health Status:    %s\n", d.ResourceStatus.HealthInfo.HealthStatus))
 			}
 			if d.ResourceStatus.ReservationMaintenance != nil {
-				report.WriteString(fmt.Sprintf("Maint. Ongoing:   %d hosts\n", d.ResourceStatus.ReservationMaintenance.MaintenanceOngoingCount))
+				rm := d.ResourceStatus.ReservationMaintenance
+				report.WriteString(fmt.Sprintf("Maint. Ongoing:   %d hosts\n", rm.MaintenanceOngoingCount))
+				report.WriteString(fmt.Sprintf("Maint. Pending:   %d hosts\n", rm.MaintenancePendingCount))
 			}
+		} else {
+			report.WriteString("Resource Status:  None\n")
 		}
 		if d.DeleteAtTime != "" {
 			report.WriteString(fmt.Sprintf("Auto Delete At:   %s\n", d.DeleteAtTime))
-		}
-		if d.DeleteAfterDuration != nil {
-			report.WriteString(fmt.Sprintf("Auto Delete In:   %d sec\n", d.DeleteAfterDuration.Seconds))
+		} else {
+			report.WriteString("Auto Delete At:   None\n")
 		}
 
 		report.WriteString("--------------------------------------------------------------------------------\n")
