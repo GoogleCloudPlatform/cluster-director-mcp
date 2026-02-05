@@ -7,11 +7,11 @@ import shutil
 from pathlib import Path
 
 # Parses a gemini extensions/settings file and adds 
-# Cluster Director AI Assistants and context7 if they are not already present
+# If Cluster Director AI Assistants are not already present
 
 def add_extensions_to_gemini_json(file_path):
     """
-    Adds cluster Director AI Assistants (GKE and Slurm) and context7 extensions servers to gemini JSON file.
+    Adds cluster Director AI Assistants (GKE and Slurm) extensions servers to gemini JSON file.
     """
 
     print("Processing JSON settings file: " + file_path)
@@ -76,12 +76,6 @@ def add_extensions_to_gemini_json(file_path):
     print("Adding cluster-director-slurm MCP server")
     mcp_servers_dict['cluster-director-slurm'] = get_server_config(slurm_mcp_binary_path)
 
-
-    if 'context7' not in mcp_servers_dict:
-            print("Adding context7 MCP server")
-            mcp_servers_dict['context7'] = {'httpUrl': "https://mcp.context7.com/mcp"}
-    else:
-            print("context7 MCP server already present")
 
     # Write updated JSON
     with open(file_path, 'w') as file:

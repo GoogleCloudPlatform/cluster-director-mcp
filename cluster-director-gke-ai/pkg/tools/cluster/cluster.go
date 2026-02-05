@@ -287,21 +287,21 @@ func Install(s *mcp.Server, c *config.Config) {
 
 	getMachinesInResTool := mcp.Tool{
 		Name:        "get_machines_in_reservation",
-		Description: "Identify GCE instances consuming reservations. If no reservation or zone is provided, it automatically scans the project to show total, active, and idle VM counts.",
+		Description: "Retrieves reservation metrics (usage) and metadata (status, time) as raw JSON. For multiple reservations, call ONCE without arguments to fetch all, then filter results yourself. Always display all fields in the summary table.",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"projectId": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional. GCP project ID. Defaults to the current configured project.",
+					"description": "Optional. Defaults to current configured project.",
 				},
 				"zone": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional. Specific zone to scan (e.g., us-central1-a). If omitted, all zones in the project are scanned.",
+					"description": "Optional. Specific zone. Leave empty to scan ALL zones.",
 				},
 				"reservationName": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional. Name of a specific reservation. If omitted, all reservations are inspected.",
+					"description": "Optional. Leave empty to fetch ALL reservations (Recommended for multi-reservation queries).",
 				},
 			},
 			"required": []string{},

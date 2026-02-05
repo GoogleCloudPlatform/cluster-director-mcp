@@ -2,13 +2,11 @@
 
 Interact with Cluster Director in natural language to use, monitor, maintain and benchmark your Clusters.
 
-<img src="https://raw.githubusercontent.com/GoogleCloudPlatform/cluster-director-mcp/release/assets/gemini-cli-screenshot.png" alt="context7 MCP server error" width="600">
 
 ## MCP Context
 
-We install 2 MCP servers as part of this software stallation, they are:
-1. QA-Assistant : An Expert on [AI-Hypercomputer](https://cloud.google.com/ai-hypercomputer/docs/overview) that can answer questions. based on Uses [context7](https://context7.com/) MCP server.
-2. cluster-director-mcp server: Agentic AI-Assistant that can execute tools (listed in MCP Tools section) on behalf of the user.
+We install MCP servers as part of this software stallation, they are:
+1. cluster-director-mcp server: Agentic AI-Assistant that can execute tools (listed in MCP Tools section) on behalf of the user.
 
 ## Installation and Running Cluster Director MCP
 
@@ -23,7 +21,7 @@ Cluster Director MCP Server is intended to be used on Google [Cloud Shell](https
    
 2. git clone https://github.com/GoogleCloudPlatform/cluster-director-mcp.git
 
-3. Run gemini-cli with the necessary extensions (context7 and cluster-director-mcp) installed 
+3. Run gemini-cli with the necessary cluster-director-mcp extensions installed 
 
 ```sh
 cd cluster-director-mcp; ./run.sh
@@ -43,16 +41,7 @@ cd cluster-director-mcp; ./run.sh
 - `show_job_state`: Shows the jobs running in cluster created using Cluster Director.
 - `show_recent_jobs`: Shows the recent jobs that were run on the of cluster.
 
-## Known issues
 
-- **context7 MCP server Known Issues**: Sometimes the context7 MCP server used to fetch documentation on AI-Hypercomputer gets disconnected with the message ["MCP error (context7)"]. 
-
-<img src="https://raw.githubusercontent.com/GoogleCloudPlatform/cluster-director-mcp/release/assets/mcp-error-context7.png" alt="context7 MCP server error" width="400">
-
-The fix is to run the following command in gemini-cli:
-```sh
-/mcp refresh
-```
 
 
 

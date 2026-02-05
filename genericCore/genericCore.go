@@ -484,15 +484,16 @@ type GetMachinesInReservationRequest struct {
 	ReservationName string `json:"reservationName,omitempty" jsonschema:"description=Name of the reservation. Optional."`
 }
 
-// ReservationData represents the raw data sent to the AI for analysis
+// ReservationData combines the Official Schema with your Custom Metrics
 type ReservationData struct {
-	Zone        string   `json:"zone"`
-	Name        string   `json:"name"`
-	MachineType string   `json:"machineType"`
-	TotalSlots  int      `json:"totalSlots"`
-	ActiveVms   int      `json:"activeVms"`
-	IdleVms     int      `json:"idleVms"`
-	Nodes       []string `json:"nodes,omitempty"`
+	// Embed the Official Google Cloud Struct (Matches Output Schema Exactly)
+	*compute.Reservation
+
+	// Your Custom Calculated Metrics
+	TotalSlots int
+	ActiveVms  int
+	IdleVms    int
+	Nodes      []string
 }
 
 // GetResourceNameFromURL extracts the last part of a GCP resource URL
@@ -504,6 +505,7 @@ func GetResourceNameFromURL(url string) string {
 	return parts[len(parts)-1]
 }
 
+// GetMachinesInReservationMCP acts as the high-level handler for the tool.
 func GetMachinesInReservationMCP(ctx context.Context, defaultProjectID string, req GetMachinesInReservationRequest) (string, error) {
 	projectID := req.ProjectID
 	if projectID == "" {
@@ -515,18 +517,20 @@ func GetMachinesInReservationMCP(ctx context.Context, defaultProjectID string, r
 	return GetMachinesInReservationCore(ctx, projectID, req.Zone, req.ReservationName)
 }
 
-// GetMachinesInReservationCore finds VMs consuming reservations or discovers all if resName is empty.
+// GetMachinesInReservationCore finds VMs consuming reservations and returns a detailed TEXT report matching the schema.
 func GetMachinesInReservationCore(ctx context.Context, projectID, zone, resName string) (string, error) {
 	service, err := compute.NewService(ctx)
 	if err != nil {
 		return "", fmt.Errorf("failed to create compute service: %v", err)
 	}
 
+	// Fetch Reservations
 	aggRes, err := service.Reservations.AggregatedList(projectID).Context(ctx).Do()
 	if err != nil {
 		return "", fmt.Errorf("could not list reservations: %v", err)
 	}
 
+	// Fetch Instances
 	aggInstances, err := service.Instances.AggregatedList(projectID).Filter("status != TERMINATED").Context(ctx).Do()
 	if err != nil {
 		return "", fmt.Errorf("could not list instances: %v", err)
@@ -540,10 +544,12 @@ func GetMachinesInReservationCore(ctx context.Context, projectID, zone, resName 
 		if zone != "" && currentZone != zone {
 			continue
 		}
+
 		var zoneInstances []*compute.Instance
 		if item, ok := aggInstances.Items[zoneKey]; ok {
 			zoneInstances = item.Instances
 		}
+
 		for _, res := range scopedResList.Reservations {
 			if resName != "" && res.Name != resName {
 				continue
@@ -557,23 +563,126 @@ func GetMachinesInReservationCore(ctx context.Context, projectID, zone, resName 
 	if !foundAny {
 		return fmt.Sprintf("No reservations found matching scope (Project: %s, Zone: %s, Name: %s).", projectID, zone, resName), nil
 	}
-	jsonData, err := json.Marshal(allData)
-	if err != nil {
-		return "", fmt.Errorf("failed to marshal reservation data: %v", err)
+	var report strings.Builder
+	report.WriteString(fmt.Sprintf("Reservation Report for Project: %s\n", projectID))
+	report.WriteString("================================================================================\n")
+
+	for _, d := range allData {
+		report.WriteString(fmt.Sprintf("Name:             %s\n", d.Name))
+		report.WriteString(fmt.Sprintf("ID:               %d\n", d.Id))
+		report.WriteString(fmt.Sprintf("Kind:             %s\n", d.Kind))
+		report.WriteString(fmt.Sprintf("Zone:             %s\n", GetResourceNameFromURL(d.Zone)))
+		report.WriteString(fmt.Sprintf("Status:           %s\n", d.Status))
+		report.WriteString(fmt.Sprintf("Created:          %s\n", d.CreationTimestamp))
+		report.WriteString(fmt.Sprintf("SelfLink:         %s\n", d.SelfLink))
+		if d.Description != "" {
+			report.WriteString(fmt.Sprintf("Description:      %s\n", d.Description))
+		}
+		report.WriteString(fmt.Sprintf("Utilization:      Total: %d | Active: %d | Idle: %d\n", d.TotalSlots, d.ActiveVms, d.IdleVms))
+		if len(d.Nodes) > 0 {
+			report.WriteString(fmt.Sprintf("Active Nodes:     %s\n", strings.Join(d.Nodes, ", ")))
+		}
+		report.WriteString(fmt.Sprintf("Specific Res Req: %v\n", d.SpecificReservationRequired))
+		if d.Commitment != "" {
+			report.WriteString(fmt.Sprintf("Commitment:       %s\n", GetResourceNameFromURL(d.Commitment)))
+		}
+		if len(d.LinkedCommitments) > 0 {
+			report.WriteString(fmt.Sprintf("Linked Commit:    %v\n", d.LinkedCommitments))
+		}
+		if d.SatisfiesPzs {
+			report.WriteString("Satisfies PZS:    true\n")
+		}
+		if d.SpecificReservation != nil && d.SpecificReservation.InstanceProperties != nil {
+			props := d.SpecificReservation.InstanceProperties
+			report.WriteString(fmt.Sprintf("Machine Type:     %s\n", GetResourceNameFromURL(props.MachineType)))
+
+			if len(props.GuestAccelerators) > 0 {
+				var accs []string
+				for _, a := range props.GuestAccelerators {
+					accs = append(accs, fmt.Sprintf("%s (x%d)", GetResourceNameFromURL(a.AcceleratorType), a.AcceleratorCount))
+				}
+				report.WriteString(fmt.Sprintf("Accelerators:     %s\n", strings.Join(accs, ", ")))
+			}
+			if len(props.LocalSsds) > 0 {
+				report.WriteString(fmt.Sprintf("Local SSDs:       %d attached\n", len(props.LocalSsds)))
+			}
+			if props.MinCpuPlatform != "" {
+				report.WriteString(fmt.Sprintf("Min CPU Plat:     %s\n", props.MinCpuPlatform))
+			}
+		}
+		if d.AggregateReservation != nil {
+			report.WriteString(fmt.Sprintf("Agg. VM Family:   %s\n", d.AggregateReservation.VmFamily))
+			report.WriteString(fmt.Sprintf("Agg. Workload:    %s\n", d.AggregateReservation.WorkloadType))
+		}
+		if d.ShareSettings != nil {
+			report.WriteString(fmt.Sprintf("Share Type:       %s\n", d.ShareSettings.ShareType))
+			if d.ShareSettings.ProjectMap != nil {
+				var projects []string
+				for k := range d.ShareSettings.ProjectMap {
+					projects = append(projects, k)
+				}
+				report.WriteString(fmt.Sprintf("Shared With:      %s\n", strings.Join(projects, ", ")))
+			}
+		}
+		if d.ReservationSharingPolicy != nil {
+			report.WriteString(fmt.Sprintf("Service Sharing:  %s\n", d.ReservationSharingPolicy.ServiceShareType))
+		}
+		if len(d.ResourcePolicies) > 0 {
+			report.WriteString(fmt.Sprintf("Resource Policies:%v\n", d.ResourcePolicies))
+		}
+		if d.DeploymentType != "" {
+			report.WriteString(fmt.Sprintf("Deployment Type:  %s\n", d.DeploymentType))
+		}
+		if d.AdvancedDeploymentControl != nil {
+			report.WriteString(fmt.Sprintf("Adv. Deploy Mode: %s\n", d.AdvancedDeploymentControl.ReservationOperationalMode))
+		}
+		if d.EnableEmergentMaintenance {
+			report.WriteString("Emergent Maint:   Allowed\n")
+		}
+		if d.ProtectionTier != "" {
+			report.WriteString(fmt.Sprintf("Protection Tier:  %s\n", d.ProtectionTier))
+		}
+		if d.SchedulingType != "" {
+			report.WriteString(fmt.Sprintf("Scheduling Type:  %s\n", d.SchedulingType))
+		}
+		if d.ResourceStatus != nil {
+			if d.ResourceStatus.HealthInfo != nil {
+				report.WriteString(fmt.Sprintf("Health Status:    %s\n", d.ResourceStatus.HealthInfo.HealthStatus))
+			}
+			if d.ResourceStatus.ReservationMaintenance != nil {
+				report.WriteString(fmt.Sprintf("Maint. Ongoing:   %d hosts\n", d.ResourceStatus.ReservationMaintenance.MaintenanceOngoingCount))
+			}
+		}
+		if d.DeleteAtTime != "" {
+			report.WriteString(fmt.Sprintf("Auto Delete At:   %s\n", d.DeleteAtTime))
+		}
+		if d.DeleteAfterDuration != nil {
+			report.WriteString(fmt.Sprintf("Auto Delete In:   %d sec\n", d.DeleteAfterDuration.Seconds))
+		}
+
+		report.WriteString("--------------------------------------------------------------------------------\n")
 	}
-	return string(jsonData), nil
+
+	return report.String(), nil
 }
 
-// buildDataFromReservation calculates metrics and returns a struct for JSON output
+// buildDataFromReservation calculates metrics and wraps the official schema
 func buildDataFromReservation(zone string, res *compute.Reservation, instances []*compute.Instance) ReservationData {
-	resMachineType := GetResourceNameFromURL(res.SpecificReservation.InstanceProperties.MachineType)
-	totalSlots := int(res.SpecificReservation.Count)
+	var resMachineType string
+	var totalSlots int
+
+	if res.SpecificReservation != nil {
+		resMachineType = GetResourceNameFromURL(res.SpecificReservation.InstanceProperties.MachineType)
+		totalSlots = int(res.SpecificReservation.Count)
+	}
+
 	activeVms := 0
 	var vmNames []string
 
 	for _, instance := range instances {
 		vmType := GetResourceNameFromURL(instance.MachineType)
 		isMatch := false
+
 		if res.SpecificReservationRequired {
 			if instance.ReservationAffinity != nil && instance.ReservationAffinity.ConsumeReservationType == "SPECIFIC_RESERVATION" {
 				for _, val := range instance.ReservationAffinity.Values {
@@ -594,13 +703,10 @@ func buildDataFromReservation(zone string, res *compute.Reservation, instances [
 			vmNames = append(vmNames, instance.Name)
 		}
 	}
-
 	idleVms := totalSlots - activeVms
 
 	return ReservationData{
-		Zone:        zone,
-		Name:        res.Name,
-		MachineType: resMachineType,
+		Reservation: res,
 		TotalSlots:  totalSlots,
 		ActiveVms:   activeVms,
 		IdleVms:     idleVms,
