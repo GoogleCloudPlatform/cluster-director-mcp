@@ -74,9 +74,11 @@ echo -n "Running  based on gemini-cli version "
 gemini --version
 echo "..."
 wait $git_pull_make_pid
+
+SERVERS = "cluster-director-gke-ai cluster-director-slurm"
 if [ -n "$CDMCP_DEBUG" ]; then
-    echo "CDMCP_DEBUG is defined."    
-    gemini --debug --allowed-mcp-server-names  cluster-director-gke-ai "$@"
+    echo "CDMCP_DEBUG is defined. Launching GKE and Slurm MCPs..."    
+    gemini --debug --allowed-mcp-server-names $SERVERS "$@"
 else
-    gemini --allowed-mcp-server-names  cluster-director-gke-ai "$@"
+    gemini --allowed-mcp-server-names  $SERVERS "$@"
 fi
