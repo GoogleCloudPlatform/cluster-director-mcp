@@ -484,7 +484,7 @@ type GetMachinesInReservationRequest struct {
 	ReservationName string `json:"reservationName,omitempty" jsonschema:"description=Name of the reservation. Optional."`
 }
 
-// ReservationData combines the Official Schema with your Custom Metrics
+// ReservationData combines the Official Schema with the Custom Metrics
 type ReservationData struct {
 	// Embed the Official Google Cloud Struct (Matches Output Schema Exactly)
 	*compute.Reservation
