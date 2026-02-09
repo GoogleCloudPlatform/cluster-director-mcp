@@ -5,7 +5,7 @@
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
+#      http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
@@ -18,6 +18,10 @@
 ###############################################################################
 
 export CLUSTER_DIRECTOR_MCP_DEBUG=1
+
+# Google Compute MCP 
+export MCP_GOOGLE_COMPUTE_URL="https://compute.googleapis.com/mcp"
+# export GOOGLE_APPLICATION_CREDENTIALS="$HOME/.config/gcloud/application_default_credentials.json"
 
 # Update cluster-director-mcp if necessary
 echo "----"
@@ -65,20 +69,43 @@ if [[ "$1" != "--ignore_iam" ]]; then
   fi
 fi
 
-# Update gemini settings.json to install MCP servers
+# --- NEW: Command Line Filtering Logic ---
+# This block checks if the first argument is a known server name
+SELECTED_SERVER=$1
+mkdir -p .gemini
+
+if [[ -n "$SELECTED_SERVER" && "$SELECTED_SERVER" != "--ignore_iam" && "$SELECTED_SERVER" != "--debug" ]]; then
+    echo "----"
+    echo "Filtering: Only allowing tools from server: $SELECTED_SERVER"
+    # Create project-level settings to override global ~/.gemini/settings.json
+    cat > .gemini/settings.json << EOF
+{
+  "mcp": {
+    "allowed": ["$SELECTED_SERVER"]
+  }
+}
+EOF
+    shift # Remove the server name from arguments so it doesn't pass to gemini-cli
+else
+    # Default behavior: remove the filter file so all servers in ~/.gemini/settings.json load
+    echo "----"
+    echo "No server specified. Loading all configured servers..."
+    rm -f .gemini/settings.json
+fi
+
+# Update gemini settings.json to install MCP servers (Global level)
 scripts/installExtensions.py ~/.gemini/settings.json
 
 # Run cluster-director-mcp
 echo "----"
-echo -n "Running  based on gemini-cli version "
+echo -n "Running based on gemini-cli version "
 gemini --version
 echo "..."
 wait $git_pull_make_pid
 
-SERVERS = "cluster-director-gke-ai cluster-director-slurm"
-if [ -n "$CDMCP_DEBUG" ]; then
-    echo "CDMCP_DEBUG is defined. Launching GKE and Slurm MCPs..."    
-    gemini --debug --allowed-mcp-server-names $SERVERS "$@"
+if [ -n "$CDMCP_DEBUG" ] || [[ "$*" == *"--debug"* ]]; then
+    echo "CDMCP_DEBUG is defined. Launching gemini with --debug..."
+    gemini --debug "$@"
 else
-    gemini --allowed-mcp-server-names  $SERVERS "$@"
+    gemini "$@"
 fi
