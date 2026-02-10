@@ -16,7 +16,8 @@ def add_extensions_to_gemini_json(file_path):
 
     print("Processing JSON settings file: " + file_path)
 
-    shutil.copy2(json_file, json_file + ".orig")
+    # Note: json_file is defined in the global scope below
+    shutil.copy2(file_path, file_path + ".orig")
     
     try:
         with open(file_path, 'r') as file:
@@ -28,9 +29,6 @@ def add_extensions_to_gemini_json(file_path):
     except json.JSONDecodeError as e:
         print(f"Error: Parse error with JSON in {file_path}")
         print(f"Error Message: {e.msg}")
-        print(f"Line Number:   {e.lineno}")
-        print(f"Column Number: {e.colno}")
-        print(f"Char Index:    {e.pos}")        
         return
 
     # Compute path to MCP servers
@@ -60,51 +58,41 @@ def add_extensions_to_gemini_json(file_path):
 
     mcp_servers_dict = data['mcpServers']
 
-    # Delete the legacy cluster-director-mcp server
-    if 'cluster-director-mcp' in mcp_servers_dict:
-        del mcp_servers_dict['cluster-director-mcp']
+    # Remove old or unwanted servers
+    unwanted = ['cluster-director-mcp', 'VertexMcpServer', 'vertex']
+    for server in unwanted:
+        if server in mcp_servers_dict:
+            print(f"Removing unwanted server: {server}")
+            del mcp_servers_dict[server]
 
-    # Delete the legacy cluster-director-mcp server if it exists
-    if 'cluster-director-mcp' in mcp_servers_dict:
-        del mcp_servers_dict['cluster-director-mcp']
-
-    # 1. Add/Update GKE AI MCP server
+    # ADD/UPDATE LOCAL SERVERS
     print("Adding cluster-director-gke-ai MCP server")
     mcp_servers_dict['cluster-director-gke-ai'] = get_server_config(gke_ai_mcp_binary_path)
 
-    # 2. Add/Update Slurm MCP server
     print("Adding cluster-director-slurm MCP server")
     mcp_servers_dict['cluster-director-slurm'] = get_server_config(slurm_mcp_binary_path)
 
+    # ADD/UPDATE REMOTE GOOGLE COMPUTE SERVER
+    print("Adding google-compute-mcp server")
+    mcp_servers_dict['google-compute-mcp'] = {
+        "url": "https://compute.googleapis.com/mcp",
+        "trust": True
+    }
 
-    # Write updated JSON
     with open(file_path, 'w') as file:
-        # indent=4 makes the file human-readable (pretty-printed)
-        # ensure_ascii=False ensures characters like emojis or accents aren't escaped
         json.dump(data, file, indent=4, ensure_ascii=False)
     
-
-# --- Execution ---
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print("Usage: installExtensions.py <JSON file with path>")
         exit(1)
 
-    # Define our file and the new data
     json_file = sys.argv[1]
-
     folder_path = Path(json_file).parent
-
-    # Create the directory
-    # parents=True  -> Creates missing parent folders (like 'mkdir -p')
-    # exist_ok=True -> Does nothing if the folder already exists (prevents errors)
     folder_path.mkdir(parents=True, exist_ok=True)
 
-    # Create JSON
     if not os.path.exists(json_file):
         with open(json_file, 'w') as f:
-            json.dump({"description": "AI assistant for Cluster Director to deploy and use GPU clusters."}, f)
+            json.dump({"description": "AI assistant for Cluster Director."}, f)
 
-    # Update JSON to have 
     add_extensions_to_gemini_json(json_file)
-    
