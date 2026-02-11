@@ -19,24 +19,6 @@
 
 export CLUSTER_DIRECTOR_MCP_DEBUG=1
 
-# Google Compute MCP 
-export MCP_GOOGLE_COMPUTE_URL="https://compute.googleapis.com/mcp"
-
-# Set up Application Default Credentials for external MCP servers
-# This ensures that external services can authenticate to Google Cloud APIs
-echo "----"
-echo "Setting up Application Default Credentials..."
-if [ -z "$GOOGLE_APPLICATION_CREDENTIALS" ]; then
-  # Try to use gcloud's existing credentials
-  gcloud auth application-default print-access-token > /dev/null 2>&1
-  if [ $? -ne 0 ]; then
-    # If that fails, try to set up ADC without browser prompt
-    gcloud auth application-default login --no-launch-browser 2>/dev/null || true
-  fi
-else
-  echo "  GOOGLE_APPLICATION_CREDENTIALS already set to: $GOOGLE_APPLICATION_CREDENTIALS"
-fi
-
 # Update cluster-director-mcp if necessary
 echo "----"
 echo "Updating cluster-director-mcp..."
@@ -58,20 +40,6 @@ if [[ -z "$PROJECT_ID" ]]; then
   exit 1
 else
   echo "Google Cloud project set to: $PROJECT_ID"
-fi
-
-# Check if user is authenticated
-echo "----"
-echo "Checking if user is authenticated with Google Cloud..."
-if ! gcloud auth list --filter=status:ACTIVE --format='value(account)' | grep -q .; then
-  echo "Error: You are not authenticated with Google Cloud."
-  echo "Please authenticate using one of the following commands:"
-  echo "  1. For user account: gcloud auth login"
-  echo "  2. For service account: gcloud auth activate-service-account --key-file=PATH_TO_KEY_FILE"
-  exit 1
-else
-  ACTIVE_ACCOUNT=$(gcloud auth list --filter=status:ACTIVE --format='value(account)')
-  echo "Authenticated as: $ACTIVE_ACCOUNT"
 fi
 
 # Check the user has permission to query IAM policy
@@ -97,29 +65,7 @@ if [[ "$1" != "--ignore_iam" ]]; then
   fi
 fi
 
-# This block checks if the first argument is a known server name
-SELECTED_SERVER=$1
-mkdir -p .gemini
-
-if [[ -n "$SELECTED_SERVER" && "$SELECTED_SERVER" != "--ignore_iam" && "$SELECTED_SERVER" != "--debug" ]]; then
-    echo "----"
-    echo "Filtering: Only allowing tools from server: $SELECTED_SERVER"
-    cat > .gemini/settings.json << EOF
-{
-  "mcp": {
-    "allowed": ["$SELECTED_SERVER"]
-  }
-}
-EOF
-    shift # Remove the server name from arguments so it doesn't pass to gemini-cli
-else
-    # Default behavior: remove the filter file so all servers in ~/.gemini/settings.json load
-    echo "----"
-    echo "No server specified. Loading all configured servers..."
-    rm -f .gemini/settings.json
-fi
-
-# Update gemini settings.json to install MCP servers (Global level)
+# Update gemini settings.json to install MCP servers
 scripts/installExtensions.py ~/.gemini/settings.json
 
 # Run cluster-director-mcp

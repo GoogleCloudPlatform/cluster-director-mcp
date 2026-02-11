@@ -8,7 +8,7 @@ import subprocess
 from pathlib import Path
 
 # Parses a gemini extensions/settings file and adds 
-# If Cluster Director AI Assistants are not already present
+# Cluster Director AI Assistants if they are not already present
 
 def get_gcloud_token():
     """Get the current gcloud access token."""
@@ -23,12 +23,11 @@ def get_gcloud_token():
 
 def add_extensions_to_gemini_json(file_path):
     """
-    Adds cluster Director AI Assistants (GKE and Slurm) extensions servers to gemini JSON file.
+    Adds cluster Director AI Assistants (GKE and Slurm) and google-compute-mcp to gemini JSON file.
     """
 
     print("Processing JSON settings file: " + file_path)
 
-    # Note: json_file is defined in the global scope below
     shutil.copy2(file_path, file_path + ".orig")
     
     try:
@@ -70,8 +69,8 @@ def add_extensions_to_gemini_json(file_path):
 
     mcp_servers_dict = data['mcpServers']
 
-    # Remove old or unwanted servers
-    unwanted = ['cluster-director-mcp', 'VertexMcpServer', 'vertex']
+    # Remove ALL unwanted servers completely
+    unwanted = ['cluster-director-mcp', 'VertexMcpServer', 'vertex', 'context7']
     for server in unwanted:
         if server in mcp_servers_dict:
             print(f"Removing unwanted server: {server}")
@@ -102,7 +101,6 @@ def add_extensions_to_gemini_json(file_path):
         print("  → Configured with Bearer token authentication")
     else:
         # Fallback to basic configuration without explicit auth headers
-        # (may still work if gcloud credentials are in environment)
         mcp_servers_dict['google-compute-mcp'] = {
             "url": "https://compute.googleapis.com/mcp",
             "trust": True
