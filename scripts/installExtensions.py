@@ -4,6 +4,7 @@ import json
 import os
 import sys
 import shutil
+import subprocess
 from pathlib import Path
 
 def add_extensions_to_gemini_json(file_path):
