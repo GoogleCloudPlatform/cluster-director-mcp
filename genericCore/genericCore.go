@@ -29,19 +29,11 @@ import (
 	"runtime"
 	"strings"
 	"time"
-
-	"google.golang.org/api/compute/v1"
 )
 
 const maxLogFiles = 100
 
 var logger *slog.Logger
-
-// ListReservationsRequest represents the input schema for the list_reservations tool.
-type ListReservationsRequest struct {
-	ProjectID string `json:"projectId,omitempty" jsonschema:"description=GCP project ID. Optional."`
-	Zone      string `json:"zone,omitempty" jsonschema:"description=GCP zone. Optional."`
-}
 
 // GcloudListItem represents a single item from the gcloud list command's JSON output.
 type GcloudListItem struct {
@@ -374,105 +366,4 @@ func GetGCloudRegionsAndZones() ([]string, []string, error) {
 	}
 
 	return regions, zones, nil
-}
-
-// ListReservationsCore fetches reservations for a given project and zone using the Compute API.
-func ListReservationsCore(ctx context.Context, projectID string, zone string) (string, error) {
-	service, err := compute.NewService(ctx)
-	if err != nil {
-		return "", fmt.Errorf("failed to create compute service: %v", err)
-	}
-
-	var result strings.Builder
-	hasItems := false
-	itemCount := 1
-
-	req := service.Reservations.List(projectID, zone)
-	err = req.Pages(ctx, func(page *compute.ReservationList) error {
-		for _, res := range page.Items {
-			if !hasItems {
-				result.WriteString(fmt.Sprintf("Zone: %s\n", zone))
-				hasItems = true
-				result.WriteString("------------------------------------------------\n")
-			}
-			result.WriteString(fmt.Sprintf("%d. Name: %s\n", itemCount, res.Name))
-			itemCount++
-		}
-		if hasItems {
-			result.WriteString("------------------------------------------------\n")
-		}
-		return nil
-	})
-
-	if err != nil {
-		return "", fmt.Errorf("error iterating listing reservations in zone %s: %v", zone, err)
-	}
-
-	if !hasItems {
-		return "", nil
-	}
-
-	return result.String(), nil
-}
-
-// ListReservationsMCP provides the high-level logic for the list_reservations tool.
-func ListReservationsMCP(ctx context.Context, projectID string, zone string) (string, error) {
-	if projectID == "" {
-		return "Could not determine GCP project. Please run: gcloud config set project \"your-project-name\" and restart the AI Assistant", nil
-	}
-
-	if zone != "" {
-		resInfo, err := ListReservationsCore(ctx, projectID, zone)
-		if err != nil {
-			return "", err
-		}
-		if resInfo == "" {
-			return fmt.Sprintf("No reservations found in zone %s of project %s.", zone, projectID), nil
-		}
-		return resInfo, nil
-	}
-
-	// If zone is not given, use AggregatedList to find all reservations in the project
-	service, err := compute.NewService(ctx)
-	if err != nil {
-		return "", fmt.Errorf("failed to create compute service: %v", err)
-	}
-
-	var result strings.Builder
-	result.WriteString(fmt.Sprintf("Listing reservations for all zones in project %s:\n\n", projectID))
-
-	foundAny := false
-	req := service.Reservations.AggregatedList(projectID)
-	err = req.Pages(ctx, func(page *compute.ReservationAggregatedList) error {
-		for zoneKey, scopedList := range page.Items {
-			if len(scopedList.Reservations) == 0 {
-				continue
-			}
-
-			// zoneKey is usually "zones/us-central1-a"
-			zoneName := zoneKey
-			if strings.HasPrefix(zoneKey, "zones/") {
-				zoneName = strings.TrimPrefix(zoneKey, "zones/")
-			}
-
-			result.WriteString(fmt.Sprintf("Zone: %s\n", zoneName))
-			result.WriteString("------------------------------------------------\n")
-			for i, res := range scopedList.Reservations {
-				result.WriteString(fmt.Sprintf("%d. Name: %s\n", i+1, res.Name))
-			}
-			result.WriteString("------------------------------------------------\n\n")
-			foundAny = true
-		}
-		return nil
-	})
-
-	if err != nil {
-		return "", fmt.Errorf("error listing aggregated reservations: %v", err)
-	}
-
-	if !foundAny {
-		return fmt.Sprintf("No reservations found in any zone of project %s.", projectID), nil
-	}
-
-	return result.String(), nil
 }

@@ -514,58 +514,19 @@ func Install(s *mcp.Server, c *config.Config) {
 			return nil, SoftwareVersionInfoResponse{VersionInfo: result}, err
 		})
 
-	listReservationsTool := mcp.Tool{
-		Name:        "list_reservations",
-		Description: "Show list of reservations in GCP. If a zone is provided, it lists reservations in that zone. Otherwise, it identifies all zones in the project and lists reservations in each.",
-		Annotations: &mcp.ToolAnnotations{
-			ReadOnlyHint:   true,
-			IdempotentHint: true,
-		},
-		InputSchema: map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"projectId": map[string]interface{}{
-					"type":        "string",
-					"description": "GCP project ID. Optional.",
-				},
-				"zone": map[string]interface{}{
-					"type":        "string",
-					"description": "GCP zone. Optional.",
-				},
-			},
-		},
-	}
-	mcp.AddTool(
-		s,
-		&listReservationsTool,
-		func(ctx context.Context, _ *mcp.CallToolRequest, req genericCore.ListReservationsRequest) (*mcp.CallToolResult, any, error) {
-			projectID := req.ProjectID
-			if projectID == "" {
-				projectID = h.c.GetDefaultProjectID()
-			}
-			result, err := genericCore.ListReservationsMCP(ctx, projectID, req.Zone)
-			if err != nil {
-				return nil, nil, err
-			}
-			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: result}}}, nil, nil
-		},
-	)
 }
 
-// Place on local host to store files
 const LOCAL_HOST_SCRATCH_DIR = "cluster-director-mcp.scratch"
 
 func createScratchDir() bool {
 	if genericCore.CheckFileOrDirExists(LOCAL_HOST_SCRATCH_DIR, true) {
 		return true
 	}
-
 	err := os.MkdirAll(LOCAL_HOST_SCRATCH_DIR, 0755)
 	if err != nil {
 		genericCore.WriteToLog(fmt.Sprintf("Failed to create scrarch directory: %s %v", LOCAL_HOST_SCRATCH_DIR, err))
 		return false
 	}
-
 	return true
 }
 
