@@ -21,7 +21,6 @@ export CLUSTER_DIRECTOR_MCP_DEBUG=1
 
 # Google Compute MCP 
 export MCP_GOOGLE_COMPUTE_URL="https://compute.googleapis.com/mcp"
-# export GOOGLE_APPLICATION_CREDENTIALS="$HOME/.config/gcloud/application_default_credentials.json"
 
 # Update cluster-director-mcp if necessary
 echo "----"
@@ -70,29 +69,6 @@ if [[ "$1" != "--ignore_iam" ]]; then
     echo "Missing IAM roles, run with --ignore_iam to ignore (may result in some tools not working)"
   fi
 fi
-
-# # This block checks if the first argument is a known server name
-# SELECTED_SERVER=$1
-# mkdir -p .gemini
-
-# if [[ -n "$SELECTED_SERVER" && "$SELECTED_SERVER" != "--ignore_iam" && "$SELECTED_SERVER" != "--debug" ]]; then
-#     echo "----"
-#     echo "Filtering: Only allowing tools from server: $SELECTED_SERVER"
-#     # Create project-level settings to override global ~/.gemini/settings.json
-#     cat > .gemini/settings.json << EOF
-# {
-#   "mcp": {
-#     "allowed": ["$SELECTED_SERVER"]
-#   }
-# }
-# EOF
-#     shift # Remove the server name from arguments so it doesn't pass to gemini-cli
-# else
-#     # Default behavior: remove the filter file so all servers in ~/.gemini/settings.json load
-#     echo "----"
-#     echo "No server specified. Loading all configured servers..."
-#     rm -f .gemini/settings.json
-# fi
 
 # Update gemini settings.json to install MCP servers (Global level)
 echo "---"

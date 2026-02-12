@@ -13,14 +13,14 @@ def add_extensions_to_gemini_json(file_path):
     """
     print(f"Processing JSON settings file: {file_path}")
 
-    # 1. Backup existing file
+    # Backup existing file
     if os.path.exists(file_path):
         try:
             shutil.copy2(file_path, file_path + ".orig")
         except OSError as e:
             print(f"Warning: Failed to create backup: {e}")
 
-    # 2. Load existing JSON or create empty dict
+    #  Load existing JSON or create empty dict
     data = {}
     if os.path.exists(file_path):
         try:
@@ -33,13 +33,13 @@ def add_extensions_to_gemini_json(file_path):
             print(f"Error reading file: {e}")
             return
 
-    # 3. Define Paths (Using os.path.join for safety)
+    # Define Paths (Using os.path.join for safety)
     current_dir = os.getcwd()
     slurm_mcp_binary = os.path.join(current_dir, "cluster-director-slurm", "cluster-director-slurm")
     gke_ai_mcp_binary = os.path.join(current_dir, "cluster-director-gke-ai", "cluster-director-gke-ai")
     gemini_md_path = os.path.join(current_dir, "assets", "GEMINI.md")
 
-    # 4. Set Context File
+    # Set Context File
     data['contextFileName'] = gemini_md_path
 
     # Helper for Local Binary Configs
@@ -54,7 +54,7 @@ def add_extensions_to_gemini_json(file_path):
             }
         }
 
-    # 5. Configure MCP Servers
+    # Configure MCP Servers
     if 'mcpServers' not in data:
         data['mcpServers'] = {}
     
@@ -80,7 +80,7 @@ def add_extensions_to_gemini_json(file_path):
         "timeout": 60000
     }
 
-    # 6. Configure Tools (CRITICAL FIX)
+    # Configure Tools 
     # This explicitly enables the shell and file tools. 
     # Without this, the model hallucinates or fails.
     data['tools'] = {
@@ -92,7 +92,7 @@ def add_extensions_to_gemini_json(file_path):
         ]
     }
 
-    # 7. Write Update
+    #  Write Update
     try:
         with open(file_path, 'w') as file:
             json.dump(data, file, indent=4, ensure_ascii=False)
