@@ -6,105 +6,118 @@ import sys
 import shutil
 from pathlib import Path
 
-# Parses a gemini extensions/settings file and adds 
-# If Cluster Director AI Assistants are not already present
-
 def add_extensions_to_gemini_json(file_path):
     """
-    Adds cluster Director AI Assistants (GKE and Slurm) extensions servers to gemini JSON file.
+    Adds Cluster Director AI Assistants (GKE and Slurm) and Google Compute MCP servers.
+    Ensures 'tools' permissions are correctly set.
     """
+    print(f"Processing JSON settings file: {file_path}")
 
-    print("Processing JSON settings file: " + file_path)
+    # 1. Backup existing file
+    if os.path.exists(file_path):
+        try:
+            shutil.copy2(file_path, file_path + ".orig")
+        except OSError as e:
+            print(f"Warning: Failed to create backup: {e}")
 
-    shutil.copy2(json_file, json_file + ".orig")
-    
-    try:
-        with open(file_path, 'r') as file:
-            data = json.load(file)
-            
-    except FileNotFoundError:
-        print(f"Error: The file {file_path} was not found.")
-        return
-    except json.JSONDecodeError as e:
-        print(f"Error: Parse error with JSON in {file_path}")
-        print(f"Error Message: {e.msg}")
-        print(f"Line Number:   {e.lineno}")
-        print(f"Column Number: {e.colno}")
-        print(f"Char Index:    {e.pos}")        
-        return
+    # 2. Load existing JSON or create empty dict
+    data = {}
+    if os.path.exists(file_path):
+        try:
+            with open(file_path, 'r') as file:
+                data = json.load(file)
+        except json.JSONDecodeError as e:
+            print(f"Error: Invalid JSON in {file_path}: {e}")
+            return
+        except Exception as e:
+            print(f"Error reading file: {e}")
+            return
 
-    # Compute path to MCP servers
-    current_dir = str(Path.cwd())
-    slurm_mcp_binary_path = current_dir + "/cluster-director-slurm/cluster-director-slurm"
-    gke_ai_mcp_binary_path = current_dir + "/cluster-director-gke-ai/cluster-director-gke-ai"
-    gemini_md_path = current_dir + "/assets/GEMINI.md"
+    # 3. Define Paths (Using os.path.join for safety)
+    current_dir = os.getcwd()
+    slurm_mcp_binary = os.path.join(current_dir, "cluster-director-slurm", "cluster-director-slurm")
+    gke_ai_mcp_binary = os.path.join(current_dir, "cluster-director-gke-ai", "cluster-director-gke-ai")
+    gemini_md_path = os.path.join(current_dir, "assets", "GEMINI.md")
 
-    if 'contextFileName' not in data:
-        data['contextFileName'] = gemini_md_path
-    elif data['contextFileName'] != gemini_md_path:
-        data['context'] = {"fileName": gemini_md_path}
+    # 4. Set Context File
+    data['contextFileName'] = gemini_md_path
 
-    # Standard configuration for the local Go binaries
+    # Helper for Local Binary Configs
     def get_server_config(binary_path):
         return {
             "command": binary_path,
             "trust": True,
             "timeout": 72000000,
             "env": {
-                "MCP_SERVER_REQUEST_TIMEOUT": "72000000"
+                "MCP_SERVER_REQUEST_TIMEOUT": "72000000",
+                "GOOGLE_CLOUD_PROJECT": os.getenv("GOOGLE_CLOUD_PROJECT", "")
             }
         }
 
+    # 5. Configure MCP Servers
     if 'mcpServers' not in data:
         data['mcpServers'] = {}
-
-    mcp_servers_dict = data['mcpServers']
-
-    # Delete the legacy cluster-director-mcp server
-    if 'cluster-director-mcp' in mcp_servers_dict:
-        del mcp_servers_dict['cluster-director-mcp']
-
-    # Delete the legacy cluster-director-mcp server if it exists
-    if 'cluster-director-mcp' in mcp_servers_dict:
-        del mcp_servers_dict['cluster-director-mcp']
-
-    # 1. Add/Update GKE AI MCP server
-    print("Adding cluster-director-gke-ai MCP server")
-    mcp_servers_dict['cluster-director-gke-ai'] = get_server_config(gke_ai_mcp_binary_path)
-
-    # 2. Add/Update Slurm MCP server
-    print("Adding cluster-director-slurm MCP server")
-    mcp_servers_dict['cluster-director-slurm'] = get_server_config(slurm_mcp_binary_path)
-
-
-    # Write updated JSON
-    with open(file_path, 'w') as file:
-        # indent=4 makes the file human-readable (pretty-printed)
-        # ensure_ascii=False ensures characters like emojis or accents aren't escaped
-        json.dump(data, file, indent=4, ensure_ascii=False)
     
+    servers = data['mcpServers']
+
+    # Remove legacy if present
+    servers.pop('cluster-director-mcp', None)
+
+    print("Adding cluster-director-gke-ai MCP server")
+    servers['cluster-director-gke-ai'] = get_server_config(gke_ai_mcp_binary)
+
+    print("Adding cluster-director-slurm MCP server")
+    servers['cluster-director-slurm'] = get_server_config(slurm_mcp_binary)
+
+    print("Adding google-compute-mcp MCP server (Implicit Auth)")
+    servers['google-compute-mcp'] = {
+        "httpUrl": "https://compute.googleapis.com/mcp",
+        "authProviderType": "google_credentials",
+        "oauth": {
+            "scopes": ["https://www.googleapis.com/auth/compute.readonly"]
+        },
+        "trust": True,
+        "timeout": 60000
+    }
+
+    # 6. Configure Tools (CRITICAL FIX)
+    # This explicitly enables the shell and file tools. 
+    # Without this, the model hallucinates or fails.
+    data['tools'] = {
+        "core": [
+            "run_shell_command",
+            "read_file",
+            "search_file_content",
+            "save_memory"
+        ]
+    }
+
+    # 7. Write Update
+    try:
+        with open(file_path, 'w') as file:
+            json.dump(data, file, indent=4, ensure_ascii=False)
+        print(f"Successfully updated {file_path}")
+    except OSError as e:
+        print(f"Error writing settings file: {e}")
 
 # --- Execution ---
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: installExtensions.py <JSON file with path>")
-        exit(1)
+        print("Usage: installExtensions.py <JSON file path>")
+        sys.exit(1)
 
-    # Define our file and the new data
     json_file = sys.argv[1]
-
     folder_path = Path(json_file).parent
+    
+    try:
+        folder_path.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        print(f"Error creating directory {folder_path}: {e}")
+        sys.exit(1)
 
-    # Create the directory
-    # parents=True  -> Creates missing parent folders (like 'mkdir -p')
-    # exist_ok=True -> Does nothing if the folder already exists (prevents errors)
-    folder_path.mkdir(parents=True, exist_ok=True)
-
-    # Create JSON
+    # Initialize file if missing
     if not os.path.exists(json_file):
         with open(json_file, 'w') as f:
-            json.dump({"description": "AI assistant for Cluster Director to deploy and use GPU clusters."}, f)
+            json.dump({"description": "AI assistant for Cluster Director."}, f)
 
-    # Update JSON to have 
     add_extensions_to_gemini_json(json_file)
-    
