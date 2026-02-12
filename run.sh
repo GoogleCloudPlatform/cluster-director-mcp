@@ -19,6 +19,9 @@
 
 export CLUSTER_DIRECTOR_MCP_DEBUG=1
 
+# Google Compute MCP 
+export MCP_GOOGLE_COMPUTE_URL="https://compute.googleapis.com/mcp"
+
 # Update cluster-director-mcp if necessary
 echo "----"
 echo "Updating cluster-director-mcp..."
@@ -41,6 +44,8 @@ if [[ -z "$PROJECT_ID" ]]; then
 else
   echo "Google Cloud project set to: $PROJECT_ID"
 fi
+echo "Project: $PROJECT_ID"
+export GOOGLE_CLOUD_PROJECT="$PROJECT_ID"
 
 # Check the user has permission to query IAM policy
 echo "----"
@@ -65,8 +70,10 @@ if [[ "$1" != "--ignore_iam" ]]; then
   fi
 fi
 
-# Update gemini settings.json to install MCP servers
-scripts/installExtensions.py ~/.gemini/settings.json
+# Update gemini settings.json to install MCP servers (Global level)
+echo "---"
+echo "Updating ~/.gemini/settings.json..."
+python3 scripts/installExtensions.py "$HOME/.gemini/settings.json"
 
 # Run cluster-director-mcp
 echo "----"
@@ -75,9 +82,11 @@ gemini --version
 echo "..."
 wait $git_pull_make_pid
 
+SERVERS="cluster-director-gke-ai,cluster-director-slurm,google-compute-mcp"
+
 if [ -n "$CDMCP_DEBUG" ] || [[ "$*" == *"--debug"* ]]; then
     echo "CDMCP_DEBUG is defined. Launching gemini with --debug..."
-    gemini --debug "$@"
+    gemini --debug --allowed-mcp-server-names "$SERVERS" "$@"
 else
-    gemini "$@"
+    gemini --allowed-mcp-server-names "$SERVERS" "$@"
 fi
