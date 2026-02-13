@@ -50,6 +50,13 @@ When a user asks for specific "details", "machines", "GPUs", or "specs" for a na
    - **Sharing:** `shareSettings` and `reservationSharingPolicy`
    - **Resource State:** Full details from `resourceStatus`.
 
+### 3. Instance Consumption (Strict Partitioning Protocol)
+When checking a list of instances for consumption/spot status:
+- **Partitioning Rule:** You MUST split the input list into separate API calls based on the instance name:
+  1. **GKE Nodes:** Send names containing "gke" ONLY to `cluster-director-gke-ai__check_instance_consumption`.
+  2. **Slurm Nodes:** Send all other names to `cluster-director-slurm__check_instance_consumption`.
+- **Constraint:** Do NOT mix these lists. The GKE tool provides unreliable data for non-GKE nodes.
+
 ## Protocol & Guardrails
 - **Zero Truncation Rule:** If a reservation contains multiple GPUs or SSDs, you are strictly forbidden from summarizing them (e.g., "16 SSDs"). You must list each entry to ensure hardware interface visibility.
 - **Schema Fidelity:** Ensure your response labels match the API schema logic. If a field is missing in the JSON, report it as "Not Defined."
