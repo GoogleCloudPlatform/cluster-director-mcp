@@ -413,12 +413,20 @@ func CheckInstanceConsumptionCore(ctx context.Context, req CheckConsumptionReque
 		return status, nil
 	}
 
-	// 1. Get Instance
 	var instance *compute.Instance
-	if req.Zone == "" {
-		// Search all zones if zone is missing
+
+	if req.Zone != "" {
+		inst, err := service.Instances.Get(projectID, req.Zone, req.InstanceName).Context(ctx).Do()
+		if err == nil {
+			instance = inst
+			status.Zone = req.Zone
+		}
+	}
+
+	if instance == nil {
 		filter := fmt.Sprintf("name = \"%s\"", req.InstanceName)
 		found := false
+
 		err := service.Instances.AggregatedList(projectID).Filter(filter).Pages(ctx, func(page *compute.InstanceAggregatedList) error {
 			for _, list := range page.Items {
 				for _, inst := range list.Instances {
@@ -432,20 +440,19 @@ func CheckInstanceConsumptionCore(ctx context.Context, req CheckConsumptionReque
 			}
 			return nil
 		})
+
 		if err != nil || !found {
-			status.ConsumptionStatus = fmt.Sprintf("Instance not found: %s", req.InstanceName)
-			return status, nil
-		}
-	} else {
-		// Direct fetch
-		instance, err = service.Instances.Get(projectID, req.Zone, req.InstanceName).Context(ctx).Do()
-		if err != nil {
-			status.ConsumptionStatus = fmt.Sprintf("Could not get instance: %v", err)
+			errorMsg := fmt.Sprintf("Instance not found: %s", req.InstanceName)
+			if req.Zone != "" {
+				errorMsg += fmt.Sprintf(" (Checked %s and searched all zones)", req.Zone)
+			}
+			status.ConsumptionStatus = errorMsg
 			return status, nil
 		}
 	}
 
-	// 2. Check Spot Status
+	// Check Spot Status
+
 	isSpot := false
 	status.ProvisioningModel = "STANDARD VM"
 	if instance.Scheduling != nil {
@@ -458,7 +465,7 @@ func CheckInstanceConsumptionCore(ctx context.Context, req CheckConsumptionReque
 		}
 	}
 
-	// 3. Check Reservation Status
+	// Check Reservation Status
 	if isSpot {
 		status.ReservationAffinity = "None (Spot VM)"
 		status.ConsumptionStatus = "Not consuming (Spot VMs cannot use reservations)"
@@ -488,19 +495,22 @@ func CheckInstanceConsumptionCore(ctx context.Context, req CheckConsumptionReque
 		case "ANY_RESERVATION":
 			status.ReservationAffinity = "Automatic (Any matching reservation)"
 			foundMatchName := ""
-			req := service.Reservations.List(projectID, status.Zone)
-			_ = req.Pages(ctx, func(page *compute.ReservationList) error {
+
+			reqRes := service.Reservations.List(projectID, status.Zone)
+
+			_ = reqRes.Pages(ctx, func(page *compute.ReservationList) error {
 				for _, res := range page.Items {
 					if res.SpecificReservationRequired || res.Status != "READY" {
 						continue
 					}
+
 					if res.SpecificReservation != nil && res.SpecificReservation.InstanceProperties != nil {
 						resMachineType := GetResourceNameFromURL(res.SpecificReservation.InstanceProperties.MachineType)
 						instMachineType := GetResourceNameFromURL(instance.MachineType)
 
 						if resMachineType == instMachineType {
 							foundMatchName = res.Name
-							return nil 
+							return nil
 						}
 					}
 				}
