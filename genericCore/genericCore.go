@@ -29,6 +29,9 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	compute "google.golang.org/api/compute/v1"
+	"google.golang.org/api/option"
 )
 
 const maxLogFiles = 100
@@ -40,7 +43,23 @@ type GcloudListItem struct {
 	Name string `json:"name"`
 }
 
+type CheckConsumptionRequestShared struct {
+	InstanceName string
+	Zone         string
+	ProjectID    string
+}
+
+type InstanceConsumptionStatus struct {
+	InstanceName        string `json:"instance_name"`
+	Zone                string `json:"zone"`
+	ProvisioningModel   string `json:"provisioning_model"`
+	ReservationAffinity string `json:"reservation_affinity"`
+	ConsumptionStatus   string `json:"consumption_status"`
+}
+
 func WriteToLog(message string) {
+
+	message = strings.ReplaceAll(message, "\n", " | ")
 
 	if logger == nil {
 		f := CreateUniqueFilePath("logs/log.cluster-director-mcp")
@@ -366,4 +385,139 @@ func GetGCloudRegionsAndZones() ([]string, []string, error) {
 	}
 
 	return regions, zones, nil
+}
+
+func GetResourceNameFromURL(url string) string {
+	parts := strings.Split(url, "/")
+	if len(parts) > 0 {
+		return parts[len(parts)-1]
+	}
+	return url
+}
+
+func CheckInstanceConsumptionCore(ctx context.Context, req CheckConsumptionRequestShared, defaultProjectID string) (InstanceConsumptionStatus, error) {
+	WriteToLog("CheckInstanceConsumptionCore.0000")
+
+	var status InstanceConsumptionStatus
+	status.InstanceName = req.InstanceName
+	status.Zone = req.Zone
+
+	projectID := req.ProjectID
+	if projectID == "" {
+		projectID = defaultProjectID
+	}
+
+	service, err := compute.NewService(ctx, option.WithScopes(compute.ComputeScope))
+	if err != nil {
+		status.ConsumptionStatus = fmt.Sprintf("Failed to create compute service: %v", err)
+		return status, nil
+	}
+
+	// 1. Get Instance
+	var instance *compute.Instance
+	if req.Zone == "" {
+		// Search all zones if zone is missing
+		filter := fmt.Sprintf("name = \"%s\"", req.InstanceName)
+		found := false
+		err := service.Instances.AggregatedList(projectID).Filter(filter).Pages(ctx, func(page *compute.InstanceAggregatedList) error {
+			for _, list := range page.Items {
+				for _, inst := range list.Instances {
+					if inst.Name == req.InstanceName {
+						instance = inst
+						status.Zone = GetResourceNameFromURL(inst.Zone)
+						found = true
+						return nil
+					}
+				}
+			}
+			return nil
+		})
+		if err != nil || !found {
+			status.ConsumptionStatus = fmt.Sprintf("Instance not found: %s", req.InstanceName)
+			return status, nil
+		}
+	} else {
+		// Direct fetch
+		instance, err = service.Instances.Get(projectID, req.Zone, req.InstanceName).Context(ctx).Do()
+		if err != nil {
+			status.ConsumptionStatus = fmt.Sprintf("Could not get instance: %v", err)
+			return status, nil
+		}
+	}
+
+	// 2. Check Spot Status
+	isSpot := false
+	status.ProvisioningModel = "STANDARD VM"
+	if instance.Scheduling != nil {
+		if instance.Scheduling.ProvisioningModel == "SPOT" {
+			status.ProvisioningModel = "SPOT VM (No max duration)"
+			isSpot = true
+		} else if instance.Scheduling.Preemptible {
+			status.ProvisioningModel = "LEGACY PREEMPTIBLE VM (24h max duration)"
+			isSpot = true
+		}
+	}
+
+	// 3. Check Reservation Status
+	if isSpot {
+		status.ReservationAffinity = "None (Spot VM)"
+		status.ConsumptionStatus = "Not consuming (Spot VMs cannot use reservations)"
+	} else {
+		consumeType := "ANY_RESERVATION"
+		if instance.ReservationAffinity != nil {
+			consumeType = instance.ReservationAffinity.ConsumeReservationType
+		}
+
+		switch consumeType {
+		case "NO_RESERVATION":
+			status.ReservationAffinity = "None (Explicitly disabled)"
+			status.ConsumptionStatus = "Not consuming (On-Demand)"
+
+		case "SPECIFIC_RESERVATION":
+			key := ""
+			val := ""
+			if instance.ReservationAffinity != nil {
+				key = instance.ReservationAffinity.Key
+				if len(instance.ReservationAffinity.Values) > 0 {
+					val = instance.ReservationAffinity.Values[0]
+				}
+			}
+			status.ReservationAffinity = fmt.Sprintf("Specific (Target: %s=%s)", key, val)
+			status.ConsumptionStatus = "Consuming (Specific Reservation)"
+
+		case "ANY_RESERVATION":
+			status.ReservationAffinity = "Automatic (Any matching reservation)"
+			foundMatchName := ""
+			req := service.Reservations.List(projectID, status.Zone)
+			_ = req.Pages(ctx, func(page *compute.ReservationList) error {
+				for _, res := range page.Items {
+					if res.SpecificReservationRequired || res.Status != "READY" {
+						continue
+					}
+					if res.SpecificReservation != nil && res.SpecificReservation.InstanceProperties != nil {
+						resMachineType := GetResourceNameFromURL(res.SpecificReservation.InstanceProperties.MachineType)
+						instMachineType := GetResourceNameFromURL(instance.MachineType)
+
+						if resMachineType == instMachineType {
+							foundMatchName = res.Name
+							return nil 
+						}
+					}
+				}
+				return nil
+			})
+
+			if foundMatchName != "" {
+				status.ConsumptionStatus = fmt.Sprintf("Consuming (%s)", foundMatchName)
+			} else {
+				status.ConsumptionStatus = "Not consuming (No matching reservation found)"
+			}
+
+		default:
+			status.ReservationAffinity = "Unknown"
+			status.ConsumptionStatus = "Not consuming (On-Demand)"
+		}
+	}
+
+	return status, nil
 }

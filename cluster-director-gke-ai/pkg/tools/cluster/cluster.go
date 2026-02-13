@@ -80,6 +80,12 @@ type SearchLogsResponse struct {
 	Status string `json:"status"`
 }
 
+type CheckConsumptionRequest struct {
+	InstanceNames []string `json:"InstanceNames" jsonschema:"description=List of GCE instance names to check"`
+	Zone          string   `json:"Zone" jsonschema:"description=GCP Zone (e.g., us-central1-a). Optional: If omitted, the tool will search for the instances."`
+	ProjectID     string   `json:"ProjectID,omitempty" jsonschema:"description=GCP Project ID. Optional if default is set."`
+}
+
 type handlers struct {
 	c *config.Config
 }
@@ -245,6 +251,48 @@ func Install(s *mcp.Server, c *config.Config) {
 				result += ". Your job is possibly slow because we found Xid errors on the nodes running it"
 			}
 			return nil, SearchLogsResponse{Status: result}, err
+		},
+	)
+
+	// Check Instance Consumption Type
+	checkConsumptionTool := mcp.Tool{
+		Name:        "check_instance_consumption",
+		Description: "Check if GKE (Kubernetes) cluster nodes are Spot, On-Demand, or consuming a Reservation. Use this for GKE clusters or GKE node pools.",
+		Annotations: &mcp.ToolAnnotations{
+			ReadOnlyHint:   true,
+			IdempotentHint: true,
+		},
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"InstanceNames": map[string]interface{}{
+					"type": "array",
+					"items": map[string]interface{}{
+						"type": "string",
+					},
+					"description": "List of GCE instance names",
+				},
+				"Zone": map[string]interface{}{
+					"type":        "string",
+					"description": "GCP Zone. Optional: If omitted, the tool will search for the instances.",
+				},
+				"ProjectID": map[string]interface{}{
+					"type":        "string",
+					"description": "GCP Project ID. Optional.",
+				},
+			},
+			"required": []string{"InstanceNames"},
+		},
+	}
+	mcp.AddTool(
+		s,
+		&checkConsumptionTool,
+		func(ctx context.Context, _ *mcp.CallToolRequest, req CheckConsumptionRequest) (*mcp.CallToolResult, any, error) {
+			result, err := h.checkConsumptionMCP(ctx, req)
+			if err != nil {
+				return nil, nil, err
+			}
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: result}}}, nil, nil
 		},
 	)
 
@@ -826,4 +874,40 @@ func getVersionCheckStatus(projectID string, jobObj *persistence.LongRunningJob)
 	}
 
 	return "Job is running...", true
+}
+
+// Implementation
+func (h *handlers) checkConsumptionMCP(ctx context.Context, req CheckConsumptionRequest) (string, error) {
+
+	var results []genericCore.InstanceConsumptionStatus
+
+	for _, name := range req.InstanceNames {
+		sharedReq := genericCore.CheckConsumptionRequestShared{
+			InstanceName: name,
+			Zone:         req.Zone,
+			ProjectID:    req.ProjectID,
+		}
+
+		info, err := genericCore.CheckInstanceConsumptionCore(ctx, sharedReq, h.c.GetDefaultProjectID())
+
+		if err != nil {
+			results = append(results, genericCore.InstanceConsumptionStatus{
+				InstanceName:      name,
+				ConsumptionStatus: fmt.Sprintf("Error: %v", err),
+			})
+		} else {
+			results = append(results, info)
+		}
+	}
+
+	if len(results) == 0 {
+		return "[]", nil
+	}
+
+	jsonBytes, err := json.MarshalIndent(results, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("failed to generate JSON output: %v", err)
+	}
+
+	return string(jsonBytes), nil
 }
