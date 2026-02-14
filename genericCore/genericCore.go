@@ -43,12 +43,14 @@ type GcloudListItem struct {
 	Name string `json:"name"`
 }
 
+// CheckConsumptionRequestShared defines the input from the tool
 type CheckConsumptionRequestShared struct {
 	InstanceName string
 	Zone         string
 	ProjectID    string
 }
 
+// InstanceConsumptionStatus defines the JSON output structure
 type InstanceConsumptionStatus struct {
 	InstanceName        string `json:"instance_name"`
 	Zone                string `json:"zone"`
@@ -387,6 +389,7 @@ func GetGCloudRegionsAndZones() ([]string, []string, error) {
 	return regions, zones, nil
 }
 
+// GetResourceNameFromURL extracts the last part of a GCP URL (e.g., "us-central1-a" from ".../zones/us-central1-a")
 func GetResourceNameFromURL(url string) string {
 	parts := strings.Split(url, "/")
 	if len(parts) > 0 {
@@ -395,8 +398,47 @@ func GetResourceNameFromURL(url string) string {
 	return url
 }
 
+// This mimics the "list_clusters" behavior: if we don't know where it is, we search everywhere.
+func FindInstanceInProject(ctx context.Context, service *compute.Service, projectID, instanceName string) (*compute.Instance, string, error) {
+	filter := fmt.Sprintf("name = \"%s\"", instanceName)
+
+	var foundInstance *compute.Instance
+	var foundZone string
+
+	err := service.Instances.AggregatedList(projectID).Filter(filter).Pages(ctx, func(page *compute.InstanceAggregatedList) error {
+		for _, scopedList := range page.Items {
+			if len(scopedList.Instances) > 0 {
+				for _, inst := range scopedList.Instances {
+					if inst.Name == instanceName {
+						foundInstance = inst
+						foundZone = GetResourceNameFromURL(inst.Zone)
+						return nil 
+					}
+				}
+			}
+		}
+		return nil
+	})
+
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to search project %s: %v", projectID, err)
+	}
+
+	if foundInstance == nil {
+		return nil, "", fmt.Errorf("instance '%s' not found in any zone of project '%s'", instanceName, projectID)
+	}
+
+	return foundInstance, foundZone, nil
+}
+
+// CheckInstanceConsumptionCore is the main logic function.
+// It handles Auto-Discovery, Spot Checks, and Reservation Checks.
 func CheckInstanceConsumptionCore(ctx context.Context, req CheckConsumptionRequestShared, defaultProjectID string) (InstanceConsumptionStatus, error) {
 	WriteToLog("CheckInstanceConsumptionCore.0000")
+
+	req.InstanceName = strings.TrimSpace(req.InstanceName)
+	req.Zone = strings.TrimSpace(req.Zone)
+	req.ProjectID = strings.TrimSpace(req.ProjectID)
 
 	var status InstanceConsumptionStatus
 	status.InstanceName = req.InstanceName
@@ -420,39 +462,22 @@ func CheckInstanceConsumptionCore(ctx context.Context, req CheckConsumptionReque
 		if err == nil {
 			instance = inst
 			status.Zone = req.Zone
+		} else {
+			WriteToLog(fmt.Sprintf("Direct fetch failed for %s in %s: %v. Falling back to global search.", req.InstanceName, req.Zone, err))
 		}
 	}
 
 	if instance == nil {
-		filter := fmt.Sprintf("name = \"%s\"", req.InstanceName)
-		found := false
-
-		err := service.Instances.AggregatedList(projectID).Filter(filter).Pages(ctx, func(page *compute.InstanceAggregatedList) error {
-			for _, list := range page.Items {
-				for _, inst := range list.Instances {
-					if inst.Name == req.InstanceName {
-						instance = inst
-						status.Zone = GetResourceNameFromURL(inst.Zone)
-						found = true
-						return nil
-					}
-				}
-			}
-			return nil
-		})
-
-		if err != nil || !found {
-			errorMsg := fmt.Sprintf("Instance not found: %s", req.InstanceName)
-			if req.Zone != "" {
-				errorMsg += fmt.Sprintf(" (Checked %s and searched all zones)", req.Zone)
-			}
-			status.ConsumptionStatus = errorMsg
+		foundInst, foundZone, err := FindInstanceInProject(ctx, service, projectID, req.InstanceName)
+		if err != nil {
+			status.ConsumptionStatus = fmt.Sprintf("Error: %v. Check your PROJECT_ID configuration.", err)
 			return status, nil
 		}
+		instance = foundInst
+		status.Zone = foundZone
 	}
 
-	// Check Spot Status
-
+	//  Check Spot / Preemptible Status
 	isSpot := false
 	status.ProvisioningModel = "STANDARD VM"
 	if instance.Scheduling != nil {
@@ -465,7 +490,7 @@ func CheckInstanceConsumptionCore(ctx context.Context, req CheckConsumptionReque
 		}
 	}
 
-	// Check Reservation Status
+	//  Check Reservation Status
 	if isSpot {
 		status.ReservationAffinity = "None (Spot VM)"
 		status.ConsumptionStatus = "Not consuming (Spot VMs cannot use reservations)"
@@ -495,7 +520,6 @@ func CheckInstanceConsumptionCore(ctx context.Context, req CheckConsumptionReque
 		case "ANY_RESERVATION":
 			status.ReservationAffinity = "Automatic (Any matching reservation)"
 			foundMatchName := ""
-
 			reqRes := service.Reservations.List(projectID, status.Zone)
 
 			_ = reqRes.Pages(ctx, func(page *compute.ReservationList) error {
@@ -503,14 +527,13 @@ func CheckInstanceConsumptionCore(ctx context.Context, req CheckConsumptionReque
 					if res.SpecificReservationRequired || res.Status != "READY" {
 						continue
 					}
-
 					if res.SpecificReservation != nil && res.SpecificReservation.InstanceProperties != nil {
 						resMachineType := GetResourceNameFromURL(res.SpecificReservation.InstanceProperties.MachineType)
 						instMachineType := GetResourceNameFromURL(instance.MachineType)
 
 						if resMachineType == instMachineType {
 							foundMatchName = res.Name
-							return nil
+							return nil 
 						}
 					}
 				}
@@ -530,4 +553,39 @@ func CheckInstanceConsumptionCore(ctx context.Context, req CheckConsumptionReque
 	}
 
 	return status, nil
+}
+
+// ProcessConsumptionRequest handles the loop, error catching, and JSON formatting.
+func ProcessConsumptionRequest(ctx context.Context, instanceNames []string, zone, reqProjectID, defaultProjectID string) (string, error) {
+	var results []InstanceConsumptionStatus
+
+	for _, name := range instanceNames {
+		sharedReq := CheckConsumptionRequestShared{
+			InstanceName: name,
+			Zone:         zone,
+			ProjectID:    reqProjectID,
+		}
+
+		info, err := CheckInstanceConsumptionCore(ctx, sharedReq, defaultProjectID)
+
+		if err != nil {
+			results = append(results, InstanceConsumptionStatus{
+				InstanceName:      name,
+				ConsumptionStatus: fmt.Sprintf("Error: %v", err),
+			})
+		} else {
+			results = append(results, info)
+		}
+	}
+
+	if len(results) == 0 {
+		return "[]", nil
+	}
+
+	jsonBytes, err := json.MarshalIndent(results, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("failed to generate JSON output: %v", err)
+	}
+
+	return string(jsonBytes), nil
 }

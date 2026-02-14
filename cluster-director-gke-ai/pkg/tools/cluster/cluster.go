@@ -80,6 +80,7 @@ type SearchLogsResponse struct {
 	Status string `json:"status"`
 }
 
+// CheckConsumptionRequest defines the structure for the tool input
 type CheckConsumptionRequest struct {
 	InstanceNames []string `json:"InstanceNames" jsonschema:"description=List of GCE instance names to check"`
 	Zone          string   `json:"Zone" jsonschema:"description=GCP Zone (e.g., us-central1-a). Optional: If omitted, the tool will search for the instances."`
@@ -878,36 +879,11 @@ func getVersionCheckStatus(projectID string, jobObj *persistence.LongRunningJob)
 
 // Implementation
 func (h *handlers) checkConsumptionMCP(ctx context.Context, req CheckConsumptionRequest) (string, error) {
-
-	var results []genericCore.InstanceConsumptionStatus
-
-	for _, name := range req.InstanceNames {
-		sharedReq := genericCore.CheckConsumptionRequestShared{
-			InstanceName: name,
-			Zone:         req.Zone,
-			ProjectID:    req.ProjectID,
-		}
-
-		info, err := genericCore.CheckInstanceConsumptionCore(ctx, sharedReq, h.c.GetDefaultProjectID())
-
-		if err != nil {
-			results = append(results, genericCore.InstanceConsumptionStatus{
-				InstanceName:      name,
-				ConsumptionStatus: fmt.Sprintf("Error: %v", err),
-			})
-		} else {
-			results = append(results, info)
-		}
-	}
-
-	if len(results) == 0 {
-		return "[]", nil
-	}
-
-	jsonBytes, err := json.MarshalIndent(results, "", "  ")
-	if err != nil {
-		return "", fmt.Errorf("failed to generate JSON output: %v", err)
-	}
-
-	return string(jsonBytes), nil
+	return genericCore.ProcessConsumptionRequest(
+		ctx,
+		req.InstanceNames,
+		req.Zone,
+		req.ProjectID,
+		h.c.GetDefaultProjectID(),
+	)
 }
