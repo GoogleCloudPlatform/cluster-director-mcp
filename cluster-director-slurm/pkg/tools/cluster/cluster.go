@@ -131,6 +131,13 @@ type handlers struct {
 	c *config.Config
 }
 
+// CheckConsumptionRequest defines the structure for the tool input
+type CheckConsumptionRequest struct {
+	InstanceNames []string `json:"InstanceNames" jsonschema:"description=List of GCE instance names to check"`
+	Zone          string   `json:"Zone" jsonschema:"description=GCP Zone (e.g., us-central1-a). Optional: If omitted, the tool will search for the instances."`
+	ProjectID     string   `json:"ProjectID,omitempty" jsonschema:"description=GCP Project ID. Optional if default is set."`
+}
+
 func Install(s *mcp.Server, c *config.Config) {
 	h := &handlers{
 		c: c,
@@ -513,6 +520,48 @@ func Install(s *mcp.Server, c *config.Config) {
 			result, err := h.showClusterSoftwareVersionInfoMCP(ctx, &req)
 			return nil, SoftwareVersionInfoResponse{VersionInfo: result}, err
 		})
+
+	// Check Instance Consumption Type
+	checkConsumptionTool := mcp.Tool{
+		Name:        "check_instance_consumption",
+		Description: "Check if Slurm HPC cluster nodes (login or compute) are Spot, On-Demand, or consuming a Reservation. Use this for Slurm clusters.",
+		Annotations: &mcp.ToolAnnotations{
+			ReadOnlyHint:   true,
+			IdempotentHint: true,
+		},
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"InstanceNames": map[string]interface{}{
+					"type": "array",
+					"items": map[string]interface{}{
+						"type": "string",
+					},
+					"description": "List of GCE instance names",
+				},
+				"Zone": map[string]interface{}{
+					"type":        "string",
+					"description": "GCP Zone. Optional: If omitted, the tool will search for the instances.",
+				},
+				"ProjectID": map[string]interface{}{
+					"type":        "string",
+					"description": "GCP Project ID. Optional.",
+				},
+			},
+			"required": []string{"InstanceNames"},
+		},
+	}
+	mcp.AddTool(
+		s,
+		&checkConsumptionTool,
+		func(ctx context.Context, _ *mcp.CallToolRequest, req CheckConsumptionRequest) (*mcp.CallToolResult, any, error) {
+			result, err := h.checkConsumptionMCP(ctx, req)
+			if err != nil {
+				return nil, nil, err
+			}
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: result}}}, nil, nil
+		},
+	)
 
 }
 
@@ -1594,4 +1643,15 @@ func getVersionCheckStatus(projectID string, jobObj *persistence.LongRunningJob)
 		return "Version Check Completed Successfully!", true
 	}
 	return "Job is running...", true
+}
+
+// Implementation
+func (h *handlers) checkConsumptionMCP(ctx context.Context, req CheckConsumptionRequest) (string, error) {
+	return genericCore.ProcessConsumptionRequest(
+		ctx,
+		req.InstanceNames,
+		req.Zone,
+		req.ProjectID,
+		h.c.GetDefaultProjectID(),
+	)
 }

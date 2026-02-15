@@ -29,6 +29,9 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	compute "google.golang.org/api/compute/v1"
+	"google.golang.org/api/option"
 )
 
 const maxLogFiles = 100
@@ -40,7 +43,25 @@ type GcloudListItem struct {
 	Name string `json:"name"`
 }
 
+// CheckConsumptionRequestShared defines the input from the tool
+type CheckConsumptionRequestShared struct {
+	InstanceName string
+	Zone         string
+	ProjectID    string
+}
+
+// InstanceConsumptionStatus defines the JSON output structure
+type InstanceConsumptionStatus struct {
+	InstanceName        string `json:"instance_name"`
+	Zone                string `json:"zone"`
+	ProvisioningModel   string `json:"provisioning_model"`
+	ReservationAffinity string `json:"reservation_affinity"`
+	ConsumptionStatus   string `json:"consumption_status"`
+}
+
 func WriteToLog(message string) {
+
+	message = strings.ReplaceAll(message, "\n", " | ")
 
 	if logger == nil {
 		f := CreateUniqueFilePath("logs/log.cluster-director-mcp")
@@ -366,4 +387,205 @@ func GetGCloudRegionsAndZones() ([]string, []string, error) {
 	}
 
 	return regions, zones, nil
+}
+
+// GetResourceNameFromURL extracts the last part of a GCP URL (e.g., "us-central1-a" from ".../zones/us-central1-a")
+func GetResourceNameFromURL(url string) string {
+	parts := strings.Split(url, "/")
+	if len(parts) > 0 {
+		return parts[len(parts)-1]
+	}
+	return url
+}
+
+// This mimics the "list_clusters" behavior: if we don't know where it is, we search everywhere.
+func FindInstanceInProject(ctx context.Context, service *compute.Service, projectID, instanceName string) (*compute.Instance, string, error) {
+	filter := fmt.Sprintf("name = \"%s\"", instanceName)
+
+	var foundInstance *compute.Instance
+	var foundZone string
+
+	err := service.Instances.AggregatedList(projectID).Filter(filter).Pages(ctx, func(page *compute.InstanceAggregatedList) error {
+		for _, scopedList := range page.Items {
+			if len(scopedList.Instances) > 0 {
+				for _, inst := range scopedList.Instances {
+					if inst.Name == instanceName {
+						foundInstance = inst
+						foundZone = GetResourceNameFromURL(inst.Zone)
+						return nil 
+					}
+				}
+			}
+		}
+		return nil
+	})
+
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to search project %s: %v", projectID, err)
+	}
+
+	if foundInstance == nil {
+		return nil, "", fmt.Errorf("instance '%s' not found in any zone of project '%s'", instanceName, projectID)
+	}
+
+	return foundInstance, foundZone, nil
+}
+
+// CheckInstanceConsumptionCore is the main logic function.
+// It handles Auto-Discovery, Spot Checks, and Reservation Checks.
+func CheckInstanceConsumptionCore(ctx context.Context, req CheckConsumptionRequestShared, defaultProjectID string) (InstanceConsumptionStatus, error) {
+	WriteToLog("CheckInstanceConsumptionCore.0000")
+
+	req.InstanceName = strings.TrimSpace(req.InstanceName)
+	req.Zone = strings.TrimSpace(req.Zone)
+	req.ProjectID = strings.TrimSpace(req.ProjectID)
+
+	var status InstanceConsumptionStatus
+	status.InstanceName = req.InstanceName
+	status.Zone = req.Zone
+
+	projectID := req.ProjectID
+	if projectID == "" {
+		projectID = defaultProjectID
+	}
+
+	service, err := compute.NewService(ctx, option.WithScopes(compute.ComputeScope))
+	if err != nil {
+		status.ConsumptionStatus = fmt.Sprintf("Failed to create compute service: %v", err)
+		return status, nil
+	}
+
+	var instance *compute.Instance
+
+	if req.Zone != "" {
+		inst, err := service.Instances.Get(projectID, req.Zone, req.InstanceName).Context(ctx).Do()
+		if err == nil {
+			instance = inst
+			status.Zone = req.Zone
+		} else {
+			WriteToLog(fmt.Sprintf("Direct fetch failed for %s in %s: %v. Falling back to global search.", req.InstanceName, req.Zone, err))
+		}
+	}
+
+	if instance == nil {
+		foundInst, foundZone, err := FindInstanceInProject(ctx, service, projectID, req.InstanceName)
+		if err != nil {
+			status.ConsumptionStatus = fmt.Sprintf("Error: %v. Check your PROJECT_ID configuration.", err)
+			return status, nil
+		}
+		instance = foundInst
+		status.Zone = foundZone
+	}
+
+	//  Check Spot / Preemptible Status
+	isSpot := false
+	status.ProvisioningModel = "STANDARD VM"
+	if instance.Scheduling != nil {
+		if instance.Scheduling.ProvisioningModel == "SPOT" {
+			status.ProvisioningModel = "SPOT VM (No max duration)"
+			isSpot = true
+		} else if instance.Scheduling.Preemptible {
+			status.ProvisioningModel = "LEGACY PREEMPTIBLE VM (24h max duration)"
+			isSpot = true
+		}
+	}
+
+	//  Check Reservation Status
+	if isSpot {
+		status.ReservationAffinity = "None (Spot VM)"
+		status.ConsumptionStatus = "Not consuming (Spot VMs cannot use reservations)"
+	} else {
+		consumeType := "ANY_RESERVATION"
+		if instance.ReservationAffinity != nil {
+			consumeType = instance.ReservationAffinity.ConsumeReservationType
+		}
+
+		switch consumeType {
+		case "NO_RESERVATION":
+			status.ReservationAffinity = "None (Explicitly disabled)"
+			status.ConsumptionStatus = "Not consuming (On-Demand)"
+
+		case "SPECIFIC_RESERVATION":
+			key := ""
+			val := ""
+			if instance.ReservationAffinity != nil {
+				key = instance.ReservationAffinity.Key
+				if len(instance.ReservationAffinity.Values) > 0 {
+					val = instance.ReservationAffinity.Values[0]
+				}
+			}
+			status.ReservationAffinity = fmt.Sprintf("Specific (Target: %s=%s)", key, val)
+			status.ConsumptionStatus = "Consuming (Specific Reservation)"
+
+		case "ANY_RESERVATION":
+			status.ReservationAffinity = "Automatic (Any matching reservation)"
+			foundMatchName := ""
+			reqRes := service.Reservations.List(projectID, status.Zone)
+
+			_ = reqRes.Pages(ctx, func(page *compute.ReservationList) error {
+				for _, res := range page.Items {
+					if res.SpecificReservationRequired || res.Status != "READY" {
+						continue
+					}
+					if res.SpecificReservation != nil && res.SpecificReservation.InstanceProperties != nil {
+						resMachineType := GetResourceNameFromURL(res.SpecificReservation.InstanceProperties.MachineType)
+						instMachineType := GetResourceNameFromURL(instance.MachineType)
+
+						if resMachineType == instMachineType {
+							foundMatchName = res.Name
+							return nil 
+						}
+					}
+				}
+				return nil
+			})
+
+			if foundMatchName != "" {
+				status.ConsumptionStatus = fmt.Sprintf("Consuming (%s)", foundMatchName)
+			} else {
+				status.ConsumptionStatus = "Not consuming (No matching reservation found)"
+			}
+
+		default:
+			status.ReservationAffinity = "Unknown"
+			status.ConsumptionStatus = "Not consuming (On-Demand)"
+		}
+	}
+
+	return status, nil
+}
+
+// ProcessConsumptionRequest handles the loop, error catching, and JSON formatting.
+func ProcessConsumptionRequest(ctx context.Context, instanceNames []string, zone, reqProjectID, defaultProjectID string) (string, error) {
+	var results []InstanceConsumptionStatus
+
+	for _, name := range instanceNames {
+		sharedReq := CheckConsumptionRequestShared{
+			InstanceName: name,
+			Zone:         zone,
+			ProjectID:    reqProjectID,
+		}
+
+		info, err := CheckInstanceConsumptionCore(ctx, sharedReq, defaultProjectID)
+
+		if err != nil {
+			results = append(results, InstanceConsumptionStatus{
+				InstanceName:      name,
+				ConsumptionStatus: fmt.Sprintf("Error: %v", err),
+			})
+		} else {
+			results = append(results, info)
+		}
+	}
+
+	if len(results) == 0 {
+		return "[]", nil
+	}
+
+	jsonBytes, err := json.MarshalIndent(results, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("failed to generate JSON output: %v", err)
+	}
+
+	return string(jsonBytes), nil
 }
