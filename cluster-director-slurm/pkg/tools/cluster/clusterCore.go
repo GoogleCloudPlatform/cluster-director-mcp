@@ -424,7 +424,7 @@ func GetDetailedJobInfoForAllRunningCDMcpJobsOfUserInCluster(projectId string,
 	r := regexp.MustCompile(`CDMcpJobId\.(\d+)`)
 	for _, slurmJobId := range jobArray {
 		scontrolCmd := fmt.Sprintf("scontrol show job -dd %d", slurmJobId)
-		sshOut, success := runSSHOnNode(loginNode, projectId, zone, scontrolCmd)
+		sshOut, success := genericCore.RunSSHOnNode(loginNode, projectId, zone, scontrolCmd)
 		if !success {
 			s := string(fmt.Sprintf("Could not run scontrol to get info for job %d", slurmJobId) +
 				" on login node " + loginNode + " in cluster " + clusterName + " in project " + projectId + "\n" + genericCore.GetLastLines(sshOut, 10))
@@ -468,7 +468,7 @@ func GetRunningSlurmJobsForUserInCluster(projectId string, clusterName string, z
 	}
 
 	sqCmd := "squeue -u $USER -t  RUNNING "
-	sshOut, success := runSSHOnNode(loginNode, projectId, zone, sqCmd)
+	sshOut, success := genericCore.RunSSHOnNode(loginNode, projectId, zone, sqCmd)
 	if !success {
 		genericCore.WriteToLog("GetRunningSlurmJobsForUserInCluster.3333")
 		return runningJobIds, "Could not run squeue to get running jobs on " +

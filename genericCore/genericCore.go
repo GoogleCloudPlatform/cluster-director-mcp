@@ -589,3 +589,25 @@ func ProcessConsumptionRequest(ctx context.Context, instanceNames []string, zone
 
 	return string(jsonBytes), nil
 }
+
+const LOCAL_HOST_SCRATCH_DIR = "cluster-director-mcp.scratch"
+
+func CreateScratchDir() bool {
+	if CheckFileOrDirExists(LOCAL_HOST_SCRATCH_DIR, true) {
+		return true
+	}
+	err := os.MkdirAll(LOCAL_HOST_SCRATCH_DIR, 0755)
+	if err != nil {
+		WriteToLog(fmt.Sprintf("Failed to create scratch directory: %s %v", LOCAL_HOST_SCRATCH_DIR, err))
+		return false
+	}
+	return true
+}
+
+func SlurpFile(fileName string) (string, error) {
+	content, err := os.ReadFile(fileName)
+	if err != nil {
+		return "", err
+	}
+	return string(content), nil
+}
