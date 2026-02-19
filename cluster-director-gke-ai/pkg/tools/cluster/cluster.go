@@ -15,18 +15,21 @@
 package cluster
 
 import (
-	"cluster-director-mcp/cluster-director-gke-ai/pkg/config"
-	"cluster-director-mcp/genericCore"
 	"context"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
-	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"cluster-director-mcp/cluster-director-gke-ai/pkg/config"
+	"cluster-director-mcp/genericCore"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 type SearchLogsRequest struct {
@@ -43,13 +46,15 @@ type SearchLogsRequestXidGkeClusters struct {
 	EndDate     string `json:"EndDate,omitempty" jsonschema:"description=End date to search Cloud Logs"`
 	JobName     string `json:"JobName,omitempty" jsonschema:"description=GKE Job Name whose logs we should search"`
 	ClusterName string `json:"ClusterName,omitempty" jsonschema:"description=GKE cluster Name whose logs we should search"`
+	MaxResults  int    `json:"MaxResults,omitempty" jsonschema:"default=100,description=Maximum number of log entries to retrieve"`
 }
 
 type SearchLogsRequestXidGkePods struct {
-	StartDate string `json:"StartDate,omitempty" jsonschema:"description=Start date to search Cloud Logs"`
-	EndDate   string `json:"EndDate,omitempty" jsonschema:"description=End date to search Cloud Logs"`
-	JobName   string `json:"JobName,omitempty" jsonschema:"description=Name of the GKE Job whose logs we should search"`
-	PodName   string `json:"PodName,omitempty" jsonschema:"description=Name of the pod whose logsr5 we should search"`
+	StartDate  string `json:"StartDate,omitempty" jsonschema:"description=Start date to search Cloud Logs"`
+	EndDate    string `json:"EndDate,omitempty" jsonschema:"description=End date to search Cloud Logs"`
+	JobName    string `json:"JobName,omitempty" jsonschema:"description=Name of the GKE Job whose logs we should search"`
+	PodName    string `json:"PodName,omitempty" jsonschema:"description=Name of the pod whose logsr5 we should search"`
+	MaxResults int    `json:"MaxResults,omitempty" jsonschema:"default=100,description=Maximum number of log entries to retrieve"`
 }
 
 type SearchLogsRequestXidGce struct {
@@ -59,6 +64,7 @@ type SearchLogsRequestXidGce struct {
 	InstanceName string `json:"InstanceName,omitempty" jsonschema:"description=Name of the instance whose logs we should search"`
 	JobName      string `json:"JobName,omitempty" jsonschema:"description=Name of the GKE Job whose logs we should search"`
 	PodName      string `json:"PodName,omitempty" jsonschema:"description=Name of the pod whose logsr5 we should search"`
+	MaxResults   int    `json:"MaxResults,omitempty" jsonschema:"default=100,description=Maximum number of log entries to retrieve"`
 }
 
 type SearchLogsResponse struct {
@@ -114,6 +120,10 @@ func Install(s *mcp.Server, c *config.Config) {
 				"ClusterName": map[string]interface{}{
 					"type":        "string",
 					"description": "Name of the GKE cluster whose log to search. Required argument.",
+				},
+				"MaxResults": map[string]interface{}{
+					"type":        "number",
+					"description": "Maximum number of log entries to retrieve. Defaults to 100. Optional argument.",
 				},
 			},
 			"required": []string{"ClusterName", "JobName"},
@@ -209,8 +219,6 @@ func (h *handlers) searchLogsMCP(ctx context.Context, request *SearchLogsRequest
 	lookbackDuration := time.Duration(numberOfDays) * 24 * time.Hour // How far back to look
 
 	// Build the filter for GKE logs
-	// We look for 'k8s_container' resources.
-	// We specifically filter for the string "NCCL" to reduce the data we fetch.
 	startTimeFromLookBack := time.Now().Add(-lookbackDuration).Format(time.RFC3339)
 	filter := ""
 
@@ -227,18 +235,15 @@ func (h *handlers) searchLogsMCP(ctx context.Context, request *SearchLogsRequest
 	} else if searchType == genericCore.WereThereXidFailureMessagesInGkePod {
 		filter = fmt.Sprintf(`(textPayload:"NVRM: Xid" OR jsonPayload.message:"NVRM: Xid") `)
 		if instanceName != "" {
-			//filter += fmt.Sprintf(` AND resource.type="gce_instance" AND resource.labels.instance_id="%s" `, instanceName)
 			filter += fmt.Sprintf(` AND resource.type="gce_instance" AND labels."compute.googleapis.com/resource_name"="%s" `, instanceName)
 		} else if podName != "" || jobName != "" {
 			filter += ` resource.type="k8s_container" `
 			if jobName != "" {
 				filter += fmt.Sprintf(` AND (labels."k8s-pod/job-name="%s"" OR resource.labels.pod_name:"%s-") `, jobName, jobName)
 			}
-			//
 			if podName != "" {
 				filter += fmt.Sprintf(` AND resource.labels.pod_name="%s"" `, podName)
 			}
-
 			if startDateValid {
 				filter += fmt.Sprintf(` AND timestamp >= "%s" `, startDate.Format("2006-01-02"))
 			}
@@ -255,8 +260,13 @@ func (h *handlers) searchLogsMCP(ctx context.Context, request *SearchLogsRequest
 		}
 	}
 
-	// hard coded 128 max results of now
-	retMesgStr, returnResults, logSearchSuccess := genericCore.SearchLogsCore(ctx, projectID, filter, 128, searchType)
+	// Dynamic fallback for limits
+	limit := request.MaxResults
+	if limit <= 0 {
+		limit = 100
+	}
+
+	retMesgStr, returnResults, logSearchSuccess := genericCore.SearchLogsCore(ctx, projectID, filter, limit, searchType)
 
 	if !logSearchSuccess {
 		return retMesgStr, false, nil
@@ -264,14 +274,16 @@ func (h *handlers) searchLogsMCP(ctx context.Context, request *SearchLogsRequest
 
 	if searchType == genericCore.WereThereXidFailureMessagesInGkeCluster {
 		if logSearchSuccess {
-			// Each array in returnResults has podName, "", location, xidErr
-			// We need to fill in instanceName by calling getGceInstanceForPod
+			// Iterate and fill in GKE specific variables replacing the raw genericCore payload
 			for i := range returnResults {
-				if returnResults[i][0] != "" { // if podName is present
-					returnResults[i][1] = getGceInstanceForPod(returnResults[i][0])
+				if returnResults[i][0] != "" {
+					returnResults[i][1] = getGceInstanceForPod(returnResults[i][0]) // instName
+				}
+				if returnResults[i][3] != "" {
+					returnResults[i][3] = parseXidNumber(returnResults[i][3]) // xidErr
 				}
 			}
-			// Each array in returnResults has podName, instName, location, xidErr
+
 			retMesgStr = fmt.Sprintf("searchLogsMCP.4444 got %d results for Pods", len(returnResults))
 			genericCore.WriteToLog("Success: " + retMesgStr + " but no Xid errors")
 
@@ -305,17 +317,16 @@ func (h *handlers) searchLogsMCP(ctx context.Context, request *SearchLogsRequest
 }
 
 func doInstanceLogsHaveXidErrors(searchResults [][]string, h *handlers, ctx context.Context, projectID string) string {
-
 	filter := ` resource.type="gce_instance"  `
 
 	for _, arr := range searchResults {
-		// podName, instName, location, XidErr
+		// arr[1] corresponds to instName
 		if arr[1] != "" {
 			filter += fmt.Sprintf(` AND labels."compute.googleapis.com/resource_name"="%s" `, arr[1])
 		}
 	}
 
-	resultStr, xidResults, success := genericCore.SearchLogsCore(ctx, projectID, filter, 1, genericCore.WereThereXidFailureMessagesInGceInstance)
+	resultStr, xidResults, success := genericCore.SearchLogsCore(ctx, projectID, filter, 100, genericCore.WereThereXidFailureMessagesInGceInstance)
 
 	if success {
 		t := fmt.Sprintf("Found %v Xid errors in %v GCE instances", len(xidResults), len(searchResults))
@@ -326,7 +337,6 @@ func doInstanceLogsHaveXidErrors(searchResults [][]string, h *handlers, ctx cont
 }
 
 func getGceInstanceForPod(podName string) string {
-	// hard coded fix later
 	namespace := "default"
 
 	// Setup Kubernetes client
@@ -334,18 +344,24 @@ func getGceInstanceForPod(podName string) string {
 	config, _ := clientcmd.BuildConfigFromFlags("", kubeconfig)
 	clientset, _ := kubernetes.NewForConfig(config)
 
-	// 1. Get the Pod object
+	// Get the Pod object
 	pod, err := clientset.CoreV1().Pods(namespace).Get(context.TODO(), podName, metav1.GetOptions{})
 	if err != nil {
 		genericCore.WriteToLog("Could not find instance name for pod " + podName + " . error message: " + fmt.Sprintf("%v", err))
 		return ""
 	}
 
-	nodeName := pod.Spec.NodeName
+	return pod.Spec.NodeName
+}
 
-	// The ProviderID format is: gce://project-id/zone/instance-name
-	//fmt.Printf("GCE Provider ID: %s\n", node.Spec.ProviderID)
-	return nodeName
+func parseXidNumber(logLine string) string {
+	_, after, found := strings.Cut(logLine, "): ")
+
+	if found {
+		numberStr, _, _ := strings.Cut(after, ",")
+		return numberStr
+	}
+	return ""
 }
 
 // Implementation

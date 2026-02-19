@@ -20,6 +20,11 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+
+	"cloud.google.com/go/logging"
+	"cloud.google.com/go/logging/logadmin"
+	"google.golang.org/api/iterator"
+	"google.golang.org/protobuf/types/known/structpb"
 )
 
 var authToken string
@@ -59,13 +64,12 @@ func GetCachedAuthToken() string {
 
 func FilterString(rawSSHOut string, substringsToRemove []string) string {
 	// Remove warning/useless strings from ssh output
-	var b strings.Builder // Use a Builder to efficiently build the new string
+	var b strings.Builder
 	scanner := bufio.NewScanner(strings.NewReader(rawSSHOut))
 	var ignoreLine bool
 	for scanner.Scan() {
 		line := scanner.Text()
 
-		// Ignore empty lines
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
@@ -81,7 +85,6 @@ func FilterString(rawSSHOut string, substringsToRemove []string) string {
 			continue
 		}
 
-		// do no ignore this line
 		b.WriteString(line)
 		b.WriteString("\n")
 	}
@@ -154,41 +157,74 @@ type LogSearchType int
 
 const (
 	LogSearchTypeUnknown LogSearchType = iota
+	WereThereNCCLWarnMessages
+	WereThereNCCLErrorMessages
 	WereThereXidFailureMessagesInGkeCluster
 	WereThereXidFailureMessagesInGkePod
 	AreNCCLDebugLogsEnabled
-	WereThereNCCLWarnMessages
-	WereThereNCCLErrorMessages
-	WereThereXidFailureMessagesInGceInstance // Added to satisfy line 311 in cluster.go
+	WereThereXidFailureMessagesInGceInstance
 )
 
-// SearchLogsCore executes a 'gcloud logging read' command using the raw filter built by cluster.go.
-// It returns (message, 2D array of results, success boolean) to match the expected cluster.go signature.
-func SearchLogsCore(ctx context.Context, projectID string, filter string, limit int, searchType LogSearchType) (string, [][]string, bool) {
-	WriteToLog(fmt.Sprintf("Executing log search with filter: %s", filter))
+// SearchLogsCore executes a log search using the GCP SDK.
+func SearchLogsCore(ctx context.Context, projectID string, filter string, maxResults int, searchType LogSearchType) (string, [][]string, bool) {
+	WriteToLog("-------------------SearchLogsCore()-------------------")
 
-	// 1. Execute gcloud logging read natively using the provided limit and filter
-	cmd := exec.CommandContext(ctx, "gcloud", "logging", "read", filter, "--project="+projectID, fmt.Sprintf("--limit=%d", limit), "--format=json")
-	output, err := cmd.CombinedOutput()
-
+	client, err := logadmin.NewClient(ctx, projectID)
 	if err != nil {
-		WriteToLog(fmt.Sprintf("SearchLogsCore error: %v, output: %s", err, string(output)))
-		return fmt.Sprintf("Log search failed: %v", err), nil, false
+		WriteToLog("Could not create logging client")
+		return fmt.Sprintf("Could not create logging client: %v", err), nil, false
+	}
+	defer client.Close()
+
+	it := client.Entries(ctx, logadmin.Filter(filter))
+
+	countResults := 0
+	var searchResults [][]string
+
+	for {
+		entry, err := it.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return fmt.Sprintf("Could not iterate over search results: %v", err), nil, false
+		}
+
+		payload := getPayloadString(entry)
+		podName := entry.Resource.Labels["pod_name"]
+		location := entry.Resource.Labels["location"]
+
+		if searchType == WereThereXidFailureMessagesInGkeCluster {
+			// We pass the raw payload back in the 3rd index.
+			// GKE logic will parse the XID and Instance names locally.
+			searchResults = append(searchResults, []string{podName, "", location, payload})
+		} else {
+			searchResults = append(searchResults, []string{payload})
+		}
+
+		countResults++
+		if countResults >= maxResults {
+			break
+		}
 	}
 
-	logs := string(output)
+	return "Found Xid Errors", searchResults, true
+}
 
-	// If the JSON response is larger than empty brackets "[]", results were found.
-	found := len(strings.TrimSpace(logs)) > 5
-
-	// 2. Format the 2D array expected by cluster.go
-	// cluster.go expects each row to contain: []string{podName, instanceName, location, logText}
-	var parsedResults [][]string
-	if found {
-		// Supplying a safe default structure to prevent index out-of-bounds panics in cluster.go
-		// Note: A full JSON unmarshaler goes here if exact pod names must be dynamically extracted from the log JSON.
-		parsedResults = append(parsedResults, []string{"unknown-pod", "", "unknown-zone", "xid-error-found"})
+// Helper to extract string content from either text or JSON payloads
+func getPayloadString(entry *logging.Entry) string {
+	switch p := entry.Payload.(type) {
+	case string:
+		return p
+	case *structpb.Struct:
+		if val, ok := p.Fields["message"]; ok {
+			return val.GetStringValue()
+		}
+		if val, ok := p.Fields["log"]; ok {
+			return val.GetStringValue()
+		}
+		return p.String()
+	default:
+		return fmt.Sprintf("%v", p)
 	}
-
-	return "Search completed successfully", parsedResults, found
 }

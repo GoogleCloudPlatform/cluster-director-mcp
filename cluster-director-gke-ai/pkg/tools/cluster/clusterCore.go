@@ -203,3 +203,11 @@ func getAllZonesInRegion(region string, projectID string, ctx context.Context, c
 	}
 	return zonesList
 }
+
+// Instance holds the parsed data for a single machine.
+type Instance struct {
+	Name        string
+	MachineType string
+}
+
+var AllInstancesInProject []Instance
