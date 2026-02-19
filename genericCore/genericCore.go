@@ -412,7 +412,7 @@ func FindInstanceInProject(ctx context.Context, service *compute.Service, projec
 					if inst.Name == instanceName {
 						foundInstance = inst
 						foundZone = GetResourceNameFromURL(inst.Zone)
-						return nil 
+						return nil
 					}
 				}
 			}
@@ -533,7 +533,7 @@ func CheckInstanceConsumptionCore(ctx context.Context, req CheckConsumptionReque
 
 						if resMachineType == instMachineType {
 							foundMatchName = res.Name
-							return nil 
+							return nil
 						}
 					}
 				}
