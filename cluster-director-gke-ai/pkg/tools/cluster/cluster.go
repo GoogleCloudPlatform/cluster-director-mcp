@@ -100,6 +100,7 @@ func Install(s *mcp.Server, c *config.Config) {
 	}
 
 	genericCore.GetGCloudToken()
+	go genericCore.GetGCloudRegionsAndZones(context.Background(), c.GetDefaultProjectID())
 	genericCore.CreateScratchDir()
 
 	searchXidGkeClusters := mcp.Tool{

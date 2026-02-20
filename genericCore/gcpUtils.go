@@ -23,6 +23,7 @@ import (
 
 	"cloud.google.com/go/logging"
 	"cloud.google.com/go/logging/logadmin"
+	"golang.org/x/oauth2/google"
 	"google.golang.org/api/iterator"
 	"google.golang.org/protobuf/types/known/structpb"
 )
@@ -36,20 +37,26 @@ func GetGCloudToken() bool {
 		return true
 	}
 
-	WriteToLog("Executing 'gcloud auth print-access-token' to get bearer token...")
+	WriteToLog("Fetching OAuth2 bearer token natively via ADC...")
 
-	// Prepare the command
-	cmd := exec.Command("gcloud", "auth", "print-access-token")
+	// Use the default context and cloud-platform scope
+	ctx := context.Background()
+	scopes := []string{"https://www.googleapis.com/auth/cloud-platform"}
 
-	// Run the command and capture its output
-	output, err := cmd.Output()
+	ts, err := google.DefaultTokenSource(ctx, scopes...)
 	if err != nil {
-		WriteToLog(fmt.Sprintf("Error running gcloud command: %v", err))
+		WriteToLog(fmt.Sprintf("Failed to find Default Token Source: %v", err))
 		return false
 	}
 
-	authToken = strings.TrimSpace(string(output))
-	WriteToLog("Successfully retrieved access token.")
+	token, err := ts.Token()
+	if err != nil {
+		WriteToLog(fmt.Sprintf("Error retrieving native token: %v", err))
+		return false
+	}
+
+	authToken = token.AccessToken
+	WriteToLog("Successfully retrieved access token natively.")
 	return true
 }
 
