@@ -16,9 +16,15 @@ package genericCore
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os/exec"
 	"strings"
+
+	"cloud.google.com/go/logging"
+	"cloud.google.com/go/logging/logadmin"
+	"google.golang.org/api/iterator"
+	"google.golang.org/protobuf/types/known/structpb"
 )
 
 var authToken string
@@ -38,14 +44,10 @@ func GetGCloudToken() bool {
 	// Run the command and capture its output
 	output, err := cmd.Output()
 	if err != nil {
-		// If 'gcloud' is not installed or not in the PATH, this will fail.
-		// It can also fail if the user is not authenticated.
 		WriteToLog(fmt.Sprintf("Error running gcloud command: %v", err))
 		return false
 	}
 
-	// The output is a byte slice, so we convert it to a string and
-	// trim any trailing newline or whitespace.
 	authToken = strings.TrimSpace(string(output))
 	WriteToLog("Successfully retrieved access token.")
 	return true
@@ -57,14 +59,12 @@ func GetCachedAuthToken() string {
 }
 
 func FilterString(rawSSHOut string, substringsToRemove []string) string {
-	// Remove warning/useless strings from ssh output
-	var b strings.Builder // Use a Builder to efficiently build the new string
+	var b strings.Builder
 	scanner := bufio.NewScanner(strings.NewReader(rawSSHOut))
 	var ignoreLine bool
 	for scanner.Scan() {
 		line := scanner.Text()
 
-		// Ignore empty lines
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
@@ -80,7 +80,6 @@ func FilterString(rawSSHOut string, substringsToRemove []string) string {
 			continue
 		}
 
-		// do no ignore this line
 		b.WriteString(line)
 		b.WriteString("\n")
 	}
@@ -107,14 +106,11 @@ func RunSSHOnNode(hostName string, project string, zone string, cmd string) (str
 		"--command",
 		cmd)
 
-	// Run the command and capture its output
 	output, err := sshCmd.CombinedOutput()
 	rawSSHOutput := strings.TrimSpace(string(output))
 	filteredSSHOutput := FilterSSHOutput(rawSSHOutput)
 	WriteToLog(string(filteredSSHOutput))
 	if err != nil {
-		// If 'gcloud' is not installed or not in the PATH, this will fail.
-		// It can also fail if the user is not authenticated.
 		WriteToLog(fmt.Sprintf("Error running SSH cmd: %s %v", cmd, err))
 		return filteredSSHOutput, false
 	}
@@ -123,7 +119,6 @@ func RunSSHOnNode(hostName string, project string, zone string, cmd string) (str
 }
 
 func RunSCP(project string, zone string, srcFile string, destFile string) (string, bool) {
-	// Prepare the command
 	finalSCPCmd := exec.Command("/usr/bin/gcloud",
 		"compute",
 		"scp",
@@ -133,17 +128,78 @@ func RunSCP(project string, zone string, srcFile string, destFile string) (strin
 		srcFile,
 		destFile)
 
-	// Run the command and capture its output
 	output, err := finalSCPCmd.CombinedOutput()
 	scpOutput := strings.TrimSpace(string(output))
 	filteredSCPOutput := FilterSSHOutput(scpOutput)
 	WriteToLog(string(filteredSCPOutput))
 	if err != nil {
-		// If 'gcloud' is not installed or not in the PATH, this will fail.
-		// It can also fail if the user is not authenticated.
 		WriteToLog(fmt.Sprintf("Error running SCP: %v", err))
 		return filteredSCPOutput, false
 	}
 
 	return filteredSCPOutput, true
+}
+
+// LogProcessor is a callback function passed by the caller.
+// It returns the formatted slice of strings to store, and a boolean indicating if it should be included.
+type LogProcessor func(entry *logging.Entry) ([]string, bool)
+
+// SearchLogsCore executes a log search using the GCP SDK.
+// It delegates all parsing and filtering logic to the provided LogProcessor callback.
+func SearchLogsCore(ctx context.Context, projectID string, filter string, maxResults int, processor LogProcessor) (string, [][]string, bool) {
+	WriteToLog("-------------------SearchLogsCore()-------------------")
+
+	client, err := logadmin.NewClient(ctx, projectID)
+	if err != nil {
+		WriteToLog("Could not create logging client")
+		return fmt.Sprintf("Could not create logging client: %v", err), nil, false
+	}
+	defer client.Close()
+
+	it := client.Entries(ctx, logadmin.Filter(filter))
+
+	countResults := 0
+	var searchResults [][]string
+
+	for {
+		entry, err := it.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return fmt.Sprintf("Could not iterate over search results: %v", err), nil, false
+		}
+
+		// Let the callback function decide how to parse the entry, and if we should include it
+		row, include := processor(entry)
+		if include {
+			searchResults = append(searchResults, row)
+			countResults++
+		}
+
+		if countResults >= maxResults {
+			break
+		}
+	}
+
+	return "Search completed", searchResults, len(searchResults) > 0
+}
+
+// GetPayloadString extracts string content from either text or JSON payloads.
+// Exported so the caller's callback function can use it.
+func GetPayloadString(entry *logging.Entry) string {
+	switch p := entry.Payload.(type) {
+	case string:
+		return p
+	case *structpb.Struct:
+		if val, ok := p.Fields["message"]; ok {
+			return val.GetStringValue()
+		}
+		if val, ok := p.Fields["log"]; ok {
+			return val.GetStringValue()
+		}
+		return p.String()
+	default:
+		return fmt.Sprintf("%v", p)
+	}
 }
