@@ -25,6 +25,7 @@ import (
 	"cluster-director-mcp/cluster-director-gke-ai/pkg/config"
 	"cluster-director-mcp/genericCore"
 
+	"cloud.google.com/go/logging"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
@@ -71,7 +72,6 @@ type SearchLogsResponse struct {
 	Status string `json:"status"`
 }
 
-// CheckConsumptionRequest defines the structure for the tool input
 type CheckConsumptionRequest struct {
 	InstanceNames []string `json:"InstanceNames" jsonschema:"description=List of GCE instance names to check"`
 	Zone          string   `json:"Zone" jsonschema:"description=GCP Zone (e.g., us-central1-a). Optional: If omitted, the tool will search for the instances."`
@@ -82,15 +82,24 @@ type handlers struct {
 	c *config.Config
 }
 
+// LogSearchType is kept here because it is specific to GKE/Slurm domain logic
+type LogSearchType int
+
+const (
+	AreNCCLDebugLogsEnabled                  LogSearchType = iota // 0
+	WereThereNCCLWarnMessages                                     // 1
+	WereThereNCCLErrorMessages                                    // 2
+	WereThereXidFailureMessagesInGkeCluster                       // 3
+	WereThereXidFailureMessagesInGkePod                           // 4
+	WereThereXidFailureMessagesInGceInstance                      // 5
+)
+
 func Install(s *mcp.Server, c *config.Config) {
 	h := &handlers{
 		c: c,
 	}
 
-	// sets authToken
 	genericCore.GetGCloudToken()
-
-	// A place where we keep temporary files
 	genericCore.CreateScratchDir()
 
 	searchXidGkeClusters := mcp.Tool{
@@ -133,7 +142,7 @@ func Install(s *mcp.Server, c *config.Config) {
 		s,
 		&searchXidGkeClusters,
 		func(ctx context.Context, _ *mcp.CallToolRequest, req SearchLogsRequestXidGkeClusters) (*mcp.CallToolResult, SearchLogsResponse, error) {
-			result, foundsIssues, err := h.searchLogsMCP(ctx, &req, genericCore.WereThereXidFailureMessagesInGkeCluster)
+			result, foundsIssues, err := h.searchLogsMCP(ctx, &req, WereThereXidFailureMessagesInGkeCluster)
 			if foundsIssues {
 				result += ". Your job is possibly slow because we found Xid errors on the nodes running it"
 			}
@@ -141,7 +150,6 @@ func Install(s *mcp.Server, c *config.Config) {
 		},
 	)
 
-	// Check Instance Consumption Type
 	checkConsumptionTool := mcp.Tool{
 		Name:        "check_instance_consumption",
 		Description: "Check if GKE (Kubernetes) cluster nodes are Spot, On-Demand, or consuming a Reservation. Use this for GKE clusters or GKE node pools.",
@@ -185,169 +193,148 @@ func Install(s *mcp.Server, c *config.Config) {
 
 }
 
-func (h *handlers) searchLogsMCP(ctx context.Context, request *SearchLogsRequestXidGkeClusters, searchType genericCore.LogSearchType) (string, bool, error) {
+func (h *handlers) searchLogsMCP(ctx context.Context, request *SearchLogsRequestXidGkeClusters, searchType LogSearchType) (string, bool, error) {
+	genericCore.WriteToLog(fmt.Sprintf("-------------------searchLogsMCP() invoked for Cluster: %s, Job: %s-------------------", request.ClusterName, request.JobName))
+
 	projectID := h.c.GetDefaultProjectID()
 	if projectID == "" {
 		return "Could not determine GCP project. Please run: gcloud config set project \"your-project-name\" and restart the AI Assistant", false, nil
 	}
 
-	clusterName := ""
-	var startDate, endDate time.Time
-	var startDateStr, endDateStr, instanceName, jobName, podName string
-	var numberOfDays int
-	var startDateValid, endDateValid bool
-
-	if searchType == genericCore.WereThereXidFailureMessagesInGkeCluster {
-
-		startDateStr = request.StartDate
-		startDate, startDateValid = genericCore.ParseTime(startDateStr)
-
-		endDateStr = request.EndDate
-		endDate, endDateValid = genericCore.ParseTime(endDateStr)
-
-		jobName = request.JobName
-		clusterName = request.ClusterName
-
-		if jobName == "" {
-			return "JobName is required", false, nil
-		}
-		if clusterName == "" {
-			return "ClusterName is required", false, nil
-		}
-	}
-
-	lookbackDuration := time.Duration(numberOfDays) * 24 * time.Hour // How far back to look
-
-	// Build the filter for GKE logs
+	// Common configuration
+	lookbackDuration := time.Duration(14) * 24 * time.Hour
 	startTimeFromLookBack := time.Now().Add(-lookbackDuration).Format(time.RFC3339)
-	filter := ""
 
-	if searchType == genericCore.AreNCCLDebugLogsEnabled {
-		filter = fmt.Sprintf(`resource.type="k8s_container" AND timestamp >= "%s" AND (textPayload="*NCCL*" OR jsonPayload.message="*NCCL*")`, startTimeFromLookBack)
-	} else if searchType == genericCore.WereThereNCCLWarnMessages {
-		filter = fmt.Sprintf(`resource.type="k8s_container" AND timestamp >= "%s" AND (textPayload:"*NCCL WARN*" OR jsonPayload.message:"*NCCL WARN*")`, startTimeFromLookBack)
-	} else if searchType == genericCore.WereThereNCCLErrorMessages {
-		filter = fmt.Sprintf(`resource.type="k8s_container" AND timestamp >= "%s" AND (textPayload:"*NCCL ERROR*" OR jsonPayload.message:"*NCCL ERROR*")`, startTimeFromLookBack)
-	} else if searchType == genericCore.WereThereXidFailureMessagesInGkeCluster {
-		filter = `resource.type="k8s_pod" AND jsonPayload.reason="Scheduled" `
-		filter += fmt.Sprintf(` AND resource.labels.cluster_name="%s" `, clusterName)
-		filter += fmt.Sprintf(` AND (resource.labels.pod_name:"%s" OR labels."k8s-pod/job-name"="%s") `, jobName, jobName)
-	} else if searchType == genericCore.WereThereXidFailureMessagesInGkePod {
-		filter = fmt.Sprintf(`(textPayload:"NVRM: Xid" OR jsonPayload.message:"NVRM: Xid") `)
-		if instanceName != "" {
-			filter += fmt.Sprintf(` AND resource.type="gce_instance" AND labels."compute.googleapis.com/resource_name"="%s" `, instanceName)
-		} else if podName != "" || jobName != "" {
-			filter += ` resource.type="k8s_container" `
-			if jobName != "" {
-				filter += fmt.Sprintf(` AND (labels."k8s-pod/job-name="%s"" OR resource.labels.pod_name:"%s-") `, jobName, jobName)
-			}
-			if podName != "" {
-				filter += fmt.Sprintf(` AND resource.labels.pod_name="%s"" `, podName)
-			}
-			if startDateValid {
-				filter += fmt.Sprintf(` AND timestamp >= "%s" `, startDate.Format("2006-01-02"))
-			}
-			if endDateValid {
-				filter += fmt.Sprintf(` AND timestamp <= "%s" `, endDate.Format("2006-01-02"))
-			}
-			if !startDateValid && !endDateValid {
-				filter += fmt.Sprintf(` AND timestamp >= "%s" `, startTimeFromLookBack)
-			}
-			if clusterName != "" {
-				filter += fmt.Sprintf(` AND resource.labels.cluster_name="%s"`, clusterName)
-			}
-			return "Success", false, nil
-		}
-	}
-
-	// Dynamic fallback for limits
 	limit := request.MaxResults
 	if limit <= 0 {
 		limit = 100
 	}
 
-	retMesgStr, returnResults, logSearchSuccess := genericCore.SearchLogsCore(ctx, projectID, filter, limit, searchType)
+	var filter string
+	var processor genericCore.LogProcessor
 
+	// Case-by-Case Refactoring: Define the filter and processor based on the search type
+	switch searchType {
+	case WereThereXidFailureMessagesInGkeCluster:
+		if request.JobName == "" || request.ClusterName == "" {
+			return "JobName and ClusterName are required", false, nil
+		}
+		filter = fmt.Sprintf(`resource.type="k8s_pod" AND jsonPayload.reason="Scheduled" AND resource.labels.cluster_name="%s" AND (resource.labels.pod_name:"%s" OR labels."k8s-pod/job-name"="%s")`, request.ClusterName, request.JobName, request.JobName)
+
+		processor = func(entry *logging.Entry) ([]string, bool) {
+			podName := entry.Resource.Labels["pod_name"]
+			location := entry.Resource.Labels["location"]
+			payload := genericCore.GetPayloadString(entry)
+			// Returns structure: [podName, empty_instName, location, payload_for_xid]
+			return []string{podName, "", location, payload}, true
+		}
+
+	case AreNCCLDebugLogsEnabled:
+		filter = fmt.Sprintf(`resource.type="k8s_container" AND timestamp >= "%s" AND (textPayload="*NCCL*" OR jsonPayload.message="*NCCL*")`, startTimeFromLookBack)
+		processor = func(entry *logging.Entry) ([]string, bool) {
+			return []string{genericCore.GetPayloadString(entry)}, true
+		}
+
+	case WereThereNCCLWarnMessages:
+		filter = fmt.Sprintf(`resource.type="k8s_container" AND timestamp >= "%s" AND (textPayload:"*NCCL WARN*" OR jsonPayload.message:"*NCCL WARN*")`, startTimeFromLookBack)
+		processor = func(entry *logging.Entry) ([]string, bool) {
+			return []string{genericCore.GetPayloadString(entry)}, true
+		}
+
+	case WereThereNCCLErrorMessages:
+		filter = fmt.Sprintf(`resource.type="k8s_container" AND timestamp >= "%s" AND (textPayload:"*NCCL ERROR*" OR jsonPayload.message:"*NCCL ERROR*")`, startTimeFromLookBack)
+		processor = func(entry *logging.Entry) ([]string, bool) {
+			return []string{genericCore.GetPayloadString(entry)}, true
+		}
+
+	default:
+		// Fallback for safety or unhandled types
+		filter = fmt.Sprintf(`timestamp >= "%s"`, startTimeFromLookBack)
+		processor = func(entry *logging.Entry) ([]string, bool) {
+			return []string{genericCore.GetPayloadString(entry)}, true
+		}
+	}
+
+	// Execute the decoupled search
+	_, returnResults, logSearchSuccess := genericCore.SearchLogsCore(ctx, projectID, filter, limit, processor)
+
+	// Post-processing and Return Formatting
 	if !logSearchSuccess {
-		return retMesgStr, false, nil
-	}
-
-	if searchType == genericCore.WereThereXidFailureMessagesInGkeCluster {
-		if logSearchSuccess {
-			// Iterate and fill in GKE specific variables replacing the raw genericCore payload
-			for i := range returnResults {
-				if returnResults[i][0] != "" {
-					returnResults[i][1] = getGceInstanceForPod(returnResults[i][0]) // instName
-				}
-				if returnResults[i][3] != "" {
-					returnResults[i][3] = parseXidNumber(returnResults[i][3]) // xidErr
-				}
-			}
-
-			retMesgStr = fmt.Sprintf("searchLogsMCP.4444 got %d results for Pods", len(returnResults))
-			genericCore.WriteToLog("Success: " + retMesgStr + " but no Xid errors")
-
-			if len(returnResults) != 0 {
-				return doInstanceLogsHaveXidErrors(returnResults, h, ctx, projectID), true, nil
-			} else {
-				return doInstanceLogsHaveXidErrors(returnResults, h, ctx, projectID), false, nil
-			}
-		}
-	} else if searchType == genericCore.AreNCCLDebugLogsEnabled {
-		if logSearchSuccess {
-			retMesgStr += "NCCL Debug is enabled\n"
-		} else {
-			retMesgStr = "NCCL Debug Info NOT found"
-		}
-	} else if searchType == genericCore.WereThereNCCLWarnMessages {
-		if logSearchSuccess {
-			retMesgStr += "NCCL WARN messages were found\n"
-		} else {
-			retMesgStr = "NCCL WARN messages NOT found"
-		}
-	} else if searchType == genericCore.WereThereNCCLErrorMessages {
-		if logSearchSuccess {
-			retMesgStr += "NCCL ERROR messages found.\n"
-		} else {
-			retMesgStr = "NCCL ERROR messages  NOT found"
+		switch searchType {
+		case AreNCCLDebugLogsEnabled:
+			return "NCCL Debug Info NOT found", false, nil
+		case WereThereNCCLWarnMessages:
+			return "NCCL WARN messages NOT found", false, nil
+		case WereThereNCCLErrorMessages:
+			return "NCCL ERROR messages  NOT found", false, nil
+		default:
+			return "No logs found matching the criteria", false, nil
 		}
 	}
 
-	return retMesgStr, false, nil
+	switch searchType {
+	case WereThereXidFailureMessagesInGkeCluster:
+		// Fill in GKE specific variables locally
+		for i := range returnResults {
+			if len(returnResults[i]) > 0 && returnResults[i][0] != "" {
+				returnResults[i][1] = getGceInstanceForPod(returnResults[i][0])
+			}
+			if len(returnResults[i]) > 3 && returnResults[i][3] != "" {
+				returnResults[i][3] = parseXidNumber(returnResults[i][3])
+			}
+		}
+
+		retMesgStr := fmt.Sprintf("searchLogsMCP.4444 got %d results for Pods", len(returnResults))
+		genericCore.WriteToLog("Success: " + retMesgStr + " but no Xid errors")
+
+		if len(returnResults) != 0 {
+			return doInstanceLogsHaveXidErrors(returnResults, h, ctx, projectID), true, nil
+		}
+		return doInstanceLogsHaveXidErrors(returnResults, h, ctx, projectID), false, nil
+
+	case AreNCCLDebugLogsEnabled:
+		return "NCCL Debug is enabled\n", false, nil
+	case WereThereNCCLWarnMessages:
+		return "NCCL WARN messages were found\n", false, nil
+	case WereThereNCCLErrorMessages:
+		return "NCCL ERROR messages found.\n", false, nil
+	}
+
+	return "Search completed successfully", false, nil
 }
 
 func doInstanceLogsHaveXidErrors(searchResults [][]string, h *handlers, ctx context.Context, projectID string) string {
 	filter := ` resource.type="gce_instance"  `
 
 	for _, arr := range searchResults {
-		// arr[1] corresponds to instName
-		if arr[1] != "" {
+		if len(arr) > 1 && arr[1] != "" {
 			filter += fmt.Sprintf(` AND labels."compute.googleapis.com/resource_name"="%s" `, arr[1])
 		}
 	}
 
-	resultStr, xidResults, success := genericCore.SearchLogsCore(ctx, projectID, filter, 100, genericCore.WereThereXidFailureMessagesInGceInstance)
+	processor := func(entry *logging.Entry) ([]string, bool) {
+		return []string{genericCore.GetPayloadString(entry)}, true
+	}
+
+	_, xidResults, success := genericCore.SearchLogsCore(ctx, projectID, filter, 100, processor)
 
 	if success {
-		t := fmt.Sprintf("Found %v Xid errors in %v GCE instances", len(xidResults), len(searchResults))
-		return t
-	} else {
-		return resultStr
+		return fmt.Sprintf("Found %v Xid errors in %v GCE instances", len(xidResults), len(searchResults))
 	}
+	return "No Xid errors found on instances"
 }
 
 func getGceInstanceForPod(podName string) string {
+	// TODO: Parameterize namespace instead of hardcoding
 	namespace := "default"
 
-	// Setup Kubernetes client
 	kubeconfig := filepath.Join(os.Getenv("HOME"), ".kube", "config")
 	config, _ := clientcmd.BuildConfigFromFlags("", kubeconfig)
 	clientset, _ := kubernetes.NewForConfig(config)
 
-	// Get the Pod object
 	pod, err := clientset.CoreV1().Pods(namespace).Get(context.TODO(), podName, metav1.GetOptions{})
 	if err != nil {
-		genericCore.WriteToLog("Could not find instance name for pod " + podName + " . error message: " + fmt.Sprintf("%v", err))
+		genericCore.WriteToLog(fmt.Sprintf("Could not find instance name for pod %s. error: %v", podName, err))
 		return ""
 	}
 
@@ -356,7 +343,6 @@ func getGceInstanceForPod(podName string) string {
 
 func parseXidNumber(logLine string) string {
 	_, after, found := strings.Cut(logLine, "): ")
-
 	if found {
 		numberStr, _, _ := strings.Cut(after, ",")
 		return numberStr
@@ -364,7 +350,6 @@ func parseXidNumber(logLine string) string {
 	return ""
 }
 
-// Implementation
 func (h *handlers) checkConsumptionMCP(ctx context.Context, req CheckConsumptionRequest) (string, error) {
 	return genericCore.ProcessConsumptionRequest(
 		ctx,
