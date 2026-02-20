@@ -19,7 +19,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"os/user"
 	"path/filepath"
 	"regexp"
@@ -160,34 +159,6 @@ type StorageConfig struct {
 	LocalMount string `json:"localMount"`
 }
 
-// getGCloudToken executes the 'gcloud auth print-access-token' command
-// and caches the OAuth token.
-func getGCloudToken() bool {
-	if authToken != "" {
-		return true
-	}
-
-	genericCore.WriteToLog("Executing 'gcloud auth print-access-token' to get bearer token...")
-
-	// Prepare the command
-	cmd := exec.Command("gcloud", "auth", "print-access-token")
-
-	// Run the command and capture its output
-	output, err := cmd.Output()
-	if err != nil {
-		// If 'gcloud' is not installed or not in the PATH, this will fail.
-		// It can also fail if the user is not authenticated.
-		genericCore.WriteToLog(fmt.Sprintf("Error running gcloud command: %v", err))
-		return false
-	}
-
-	// The output is a byte slice, so we convert it to a string and
-	// trim any trailing newline or whitespace.
-	authToken = strings.TrimSpace(string(output))
-	genericCore.WriteToLog("Successfully retrieved access token.")
-	return true
-}
-
 func getAllZonesInRegion(region string, projectID string, ctx context.Context, computeService *compute.Service) []string {
 	var zonesList []string
 
@@ -212,80 +183,73 @@ func getAllZonesInRegion(region string, projectID string, ctx context.Context, c
 }
 
 func getAllRegionsAndZonesSupportedByHCS(projectID string) bool {
-	// Location represents a single location object inside the array.
 	type Location struct {
 		Name       string `json:"name"`
 		LocationID string `json:"locationId"`
 	}
-
-	// LocationList represents the top-level JSON object.
 	type LocationList struct {
 		Locations []Location `json:"locations"`
 	}
 
-	// Declare a variable of your top-level struct type
 	var locationData LocationList
 
-	// Equivalent CURL command:
-	// curl \
-	// -H "Content-Type:application/json" \
-	// -H "Authorization: Bearer $(gcloud auth print-access-token)" \
-	// https://hypercomputecluster.googleapis.com/v1alpha/projects/cloud-hypercomp-dev/locations/us-central1/clusters
+	// 1. NATIVE AUTH: Ensure token is fetched via ADC natively
+	if !genericCore.GetGCloudToken() {
+		genericCore.WriteToLog("Failed to retrieve native GCP token for HCS regions lookup")
+		return false
+	}
+	activeToken := genericCore.GetCachedAuthToken()
+
 	url := "https://hypercomputecluster.googleapis.com/v1alpha/projects/" + projectID + "/locations/"
 
-	bodyJson, success := genericCore.QueryURLAndGetResult(authToken, url)
+	// 2. NATIVE QUERY: Use the activeToken variable
+	bodyJson, success := genericCore.QueryURLAndGetResult(activeToken, url)
 	if !success {
 		genericCore.WriteToLog("Error getting list of zones supported by Cluster Director")
 		return false
 	}
-
-	// Unmarshal the JSON data into the locationData variable
-	// We pass the JSON string as a byte slice and a pointer to our variable.
-	err := json.Unmarshal([]byte(bodyJson), &locationData)
-	if err != nil {
+	if err := json.Unmarshal([]byte(bodyJson), &locationData); err != nil {
 		genericCore.WriteToLog(fmt.Sprintf("Error unmarshaling JSON: %v", err))
 		return false
 	}
-
 	ctx := context.Background()
 	computeService, err := compute.NewService(ctx)
 	if err != nil {
-		genericCore.WriteToLog(fmt.Sprintf("Error calling compute.NewSerice() API: %v", err))
+		genericCore.WriteToLog(fmt.Sprintf("Error calling compute.NewService() API: %v", err))
 		return false
 	}
-	// Now you can access the data through the struct
 	for _, loc := range locationData.Locations {
 		regions2Zones[loc.LocationID] = getAllZonesInRegion(loc.LocationID, projectID, ctx, computeService)
 	}
-
+	genericCore.WriteToLog(fmt.Sprintf("Successfully initialized %d regions and zones natively", len(locationData.Locations)))
 	return true
 }
 
 // Return zone for a cluster if it is present in the cached data structure
 func getZoneForCluster(projectID string, clusterName string) string {
-	var zone string
-
 	zone, exists := clusterNames2Zone[clusterName]
 	if exists {
 		return zone
-	} else {
-		getClustersInAllRegions(projectID)
+	}
+	genericCore.WriteToLog(fmt.Sprintf("Cluster %s not in cache. Triggering native scan of all regions in project %s", clusterName, projectID))
+	_, count := getClustersInAllRegions(projectID)
+	if count > 0 {
 		zone, exists = clusterNames2Zone[clusterName]
 		if exists {
+			genericCore.WriteToLog(fmt.Sprintf("Found zone %s for cluster %s after native scan", zone, clusterName))
 			return zone
-		} else {
-			genericCore.WriteToLog("Error getting zone for cluster " + clusterName + " in project " + projectID)
-			return ""
 		}
 	}
+	genericCore.WriteToLog(fmt.Sprintf("Error: Could not find cluster %s in project %s after exhaustive scan", clusterName, projectID))
+	return ""
 }
 
 func getClustersInAllRegions(projectID string) (string, int) {
 	var listOfClusters string = "["
 	countClusters := 0
 	genericCore.WriteToLog(fmt.Sprintf("Getting clusters in all regions for projectId : %s", projectID))
-	for region, _ := range regions2Zones {
-		genericCore.WriteToLog(fmt.Sprintf("Getting clusters in region : %s", region))
+	for region := range regions2Zones {
+		genericCore.WriteToLog(fmt.Sprintf("Checking clusters in region : %s", region))
 		getClustersInRegionIfExists(region, projectID)
 		for _, clusterName := range region2ClusterNames[region] {
 			genericCore.WriteToLog(fmt.Sprintf("Found cluster : %s", clusterName))
@@ -295,54 +259,33 @@ func getClustersInAllRegions(projectID string) (string, int) {
 	}
 	listOfClusters = strings.TrimSuffix(listOfClusters, ", ")
 	listOfClusters += "]"
-
-	genericCore.WriteToLog(fmt.Sprintf("Count of clusters found: %d", countClusters))
-	genericCore.WriteToLog(fmt.Sprintf("Final list of clusters in all regions in project %s : %s ", projectID, listOfClusters))
-
+	genericCore.WriteToLog(fmt.Sprintf("Final list of clusters in all regions: %s ", listOfClusters))
 	return listOfClusters, countClusters
 }
 
 func getClustersInRegionIfExists(region string, projectID string) {
-	// Equivalent CURL command:
-	// curl \
-	// -H "Content-Type:application/json" \
-	// -H "Authorization: Bearer $(gcloud auth print-access-token)" \
-	// https://hypercomputecluster.googleapis.com/v1alpha/projects/cloud-hypercomp-dev/locations/us-central1/clusters
 	url := "https://hypercomputecluster.googleapis.com/v1alpha/projects/" + projectID + "/locations/" + region + "/clusters"
 	genericCore.WriteToLog(fmt.Sprintf("getClustersInRegionIfExists - Getting clusters in region %s URL : %s", region, url))
-
-	// Remove all previous data about clusters in this region
 	region2ClusterNames[region] = []string{}
-
-	bodyString, success := genericCore.QueryURLAndGetResult(authToken, url)
+	bodyString, success := genericCore.QueryURLAndGetResult(genericCore.GetCachedAuthToken(), url)
 	genericCore.WriteToLog(fmt.Sprintf("Response received from Cluster Director API for region %s (Payload Size: %d bytes)", region, len(bodyString)))
-	// If the body has "storages" than that means it is a cluster
 	if success && strings.Contains(bodyString, "storages") {
-		genericCore.WriteToLog("Trying to parse JSON...")
 		var parsedClusterData ClustersResponse
 		err := json.Unmarshal([]byte(bodyString), &parsedClusterData)
-
-		// Force a deep copy by assigning pointer
 		MostRecentClusterData[region] = &parsedClusterData
-
 		if err != nil {
 			genericCore.WriteToLog(fmt.Sprintf("Error unmarshalling JSON: %v", err))
 		} else {
-			genericCore.WriteToLog(fmt.Sprintf("Number of elements in parsedClusterData.Clusters: %d", len(MostRecentClusterData[region].Clusters)))
 			for i := range MostRecentClusterData[region].Clusters {
 				clusterName := filepath.Base(MostRecentClusterData[region].Clusters[i].Name)
-				genericCore.WriteToLog(fmt.Sprintf("Processing JSON data for cluster : %s", clusterName))
 				for j := range MostRecentClusterData[region].Clusters[i].Compute.ResourceRequests {
 					clusterZone := MostRecentClusterData[region].Clusters[i].Compute.ResourceRequests[j].Zone
-					genericCore.WriteToLog(fmt.Sprintf("Zone for cluster : %s", clusterZone))
 					clusterNames2Zone[clusterName] = clusterZone
 				}
 				region2ClusterNames[region] = append(region2ClusterNames[region], clusterName)
 				clusterNames2JSON[clusterName] = string(bodyString)
 			}
 		}
-	} else {
-		genericCore.WriteToLog("The response body does not contain the substring 'storages'.")
 	}
 }
 

@@ -15,11 +15,15 @@
 package config
 
 import (
+	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 
 	"cluster-director-mcp/genericCore"
+
+	"golang.org/x/oauth2/google"
 )
 
 type Config struct {
@@ -65,6 +69,20 @@ func New(version string) *Config {
 }
 
 func getDefaultProjectID() string {
+	// Explicit env override
+	if envProject := strings.TrimSpace(os.Getenv("GOOGLE_CLOUD_PROJECT")); envProject != "" {
+		genericCore.WriteToLog(fmt.Sprintf("Using project ID fromenv: %s", envProject))
+		return envProject
+	}
+	// ADC default project
+	creds, err := google.FindDefaultCredentials(context.Background())
+	if err == nil && strings.TrimSpace(creds.ProjectID) != "" {
+		projectID := strings.TrimSpace(creds.ProjectID)
+		genericCore.WriteToLog(fmt.Sprintf("Using project ID from ADC: %s", projectID))
+		return projectID
+	}
+
+	// gcloud config fallback
 	out, err := exec.Command("gcloud", "config", "get", "core/project").Output()
 	if err != nil {
 		genericCore.WriteToLog(fmt.Sprintf("Failed to get default project: %v", err))

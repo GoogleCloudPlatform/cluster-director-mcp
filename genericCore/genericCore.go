@@ -24,7 +24,6 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -354,34 +353,55 @@ func IntArrContains(s []int, e int) bool {
 }
 
 // RunGcloudListCommand executes a 'gcloud compute <resource> list' command and returns the names.
-func RunGcloudListCommand(resource string) ([]string, error) {
-	cmd := exec.Command("gcloud", "compute", resource, "list", "--format=json")
-	output, err := cmd.Output()
+func RunGcloudListCommand(ctx context.Context, projectID string, resource string) ([]string, error) {
+	// Initialize the native Compute Service
+	// Passing nil for options ensures it uses ADC
+	service, err := compute.NewService(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("gcloud command for %s failed: %w", resource, err)
+		return nil, fmt.Errorf("failed to create native compute service: %w", err)
 	}
 
-	var items []GcloudListItem
-	if err := json.Unmarshal(output, &items); err != nil {
-		return nil, fmt.Errorf("failed to parse gcloud output for %s: %w", resource, err)
+	var names []string
+
+	switch resource {
+	case "regions":
+		req := service.Regions.List(projectID)
+		if err := req.Pages(ctx, func(page *compute.RegionList) error {
+			for _, r := range page.Items {
+				names = append(names, r.Name)
+			}
+			return nil
+		}); err != nil {
+			return nil, fmt.Errorf("native regions list failed: %w", err)
+		}
+
+	case "zones":
+		req := service.Zones.List(projectID)
+		if err := req.Pages(ctx, func(page *compute.ZoneList) error {
+			for _, z := range page.Items {
+				names = append(names, z.Name)
+			}
+			return nil
+		}); err != nil {
+			return nil, fmt.Errorf("native zones list failed: %w", err)
+		}
+
+	default:
+		return nil, fmt.Errorf("resource type %s not yet implemented in native SDK", resource)
 	}
 
-	names := make([]string, len(items))
-	for i, item := range items {
-		names[i] = item.Name
-	}
-
+	WriteToLog(fmt.Sprintf("Native API successfully retrieved %d %s", len(names), resource))
 	return names, nil
 }
 
 // GetGCloudRegionsAndZones fetches all available GCP regions and zones using the gcloud CLI.
-func GetGCloudRegionsAndZones() ([]string, []string, error) {
-	regions, err := RunGcloudListCommand("regions")
+func GetGCloudRegionsAndZones(ctx context.Context, projectID string) ([]string, []string, error) {
+	regions, err := RunGcloudListCommand(ctx, projectID, "regions")
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to get regions: %w", err)
 	}
 
-	zones, err := RunGcloudListCommand("zones")
+	zones, err := RunGcloudListCommand(ctx, projectID, "zones")
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to get zones: %w", err)
 	}

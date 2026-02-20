@@ -19,7 +19,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
@@ -30,6 +29,7 @@ import (
 	"cluster-director-mcp/persistence"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	compute "google.golang.org/api/compute/v0.alpha"
 )
 
 var sbatchJobIDRegex = regexp.MustCompile(`Submitted batch job (\d+)`)
@@ -143,7 +143,7 @@ func Install(s *mcp.Server, c *config.Config) {
 	}
 
 	// sets authToken
-	getGCloudToken()
+	genericCore.GetGCloudToken()
 
 	// HCS does NOT support ALL regions and has an API to return the list of
 	// regions it supports. Use HCS' API instead of GCE API to get ALL regions
@@ -612,27 +612,33 @@ func (h *handlers) checkMaintenanceEventsCore(projectID string, zone string, clu
 	if !success {
 		return fmt.Sprintf("Could not get nodes in cluster %s in project %s", clusterName, projectID), nil
 	}
-
+	ctx := context.Background()
+	computeService, err := compute.NewService(ctx)
+	if err != nil {
+		return fmt.Sprintf("Failed to create compute service: %v", err), nil
+	}
 	returnStr := ""
 	for _, node := range nodeList {
-		cmd := exec.Command("/usr/bin/gcloud", "compute", "instances", "describe", node, "--zone="+zone)
-		output, err := cmd.Output()
+		instance, err := computeService.Instances.Get(projectID, zone, node).Do()
 		returnStr += "Maintenance info for node " + node + " : "
 		if err != nil {
-			returnStr += fmt.Sprintf("Could not get maintenance info for node %s : %w", node, err)
-		} else if strings.Contains(string(output), "maintenanceStatus") {
-			scanner := bufio.NewScanner(strings.NewReader(string(output)))
-			for scanner.Scan() {
-				line := strings.TrimSpace(scanner.Text())
-				if line == "upcomingMaintenance:" {
-					for i := 0; i < 5 && scanner.Scan(); i++ {
-						returnStr += scanner.Text() + "\n"
-					}
-				}
-			}
-		} else {
-			returnStr += " No events \n"
+			returnStr += fmt.Sprintf("Could not get maintenance info: %v\n", err)
+			continue
 		}
+		// Native scheduling inspection
+		if instance.Scheduling != nil && instance.Scheduling.OnHostMaintenance != "" {
+			returnStr += fmt.Sprintf("OnHostMaintenance: %s\n", instance.Scheduling.OnHostMaintenance)
+		}
+		if instance.Scheduling != nil && instance.Scheduling.Preemptible {
+			returnStr += "Preemptible: true\n"
+		}
+		if instance.Status != "" {
+			returnStr += fmt.Sprintf("Instance Status: %s\n", instance.Status)
+		}
+		if instance.Scheduling == nil {
+			returnStr += "No scheduling info available\n"
+		}
+		returnStr += "\n"
 	}
 	return returnStr, nil
 }
