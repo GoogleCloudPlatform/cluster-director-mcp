@@ -663,8 +663,18 @@ func CheckStockoutErrorsCore(ctx context.Context, defaultProjectID, reqProjectID
 	}
 
 	// Filter specifically for GCE Instance stockout errors
-	filter := fmt.Sprintf(`resource.type="gce_instance" AND protoPayload.status.message:"ZONE_RESOURCE_POOL_EXHAUSTED" AND timestamp >= "%s" AND timestamp <= "%s"`, start.Format(time.RFC3339), end.Format(time.RFC3339))
+	var filterBuilder strings.Builder
+	filterBuilder.WriteString(fmt.Sprintf(`resource.type="gce_instance" AND protoPayload.status.message:"ZONE_RESOURCE_POOL_EXHAUSTED" AND timestamp >= "%s" AND timestamp <= "%s"`, start.Format(time.RFC3339), end.Format(time.RFC3339)))
 
+	// Inject the ClusterFilter directly into the GCP query to avoid 100-log domination by one type
+	filterLower := strings.ToLower(strings.TrimSpace(clusterFilter))
+	if filterLower == "gke" {
+		filterBuilder.WriteString(` AND protoPayload.resourceName:"gke"`)
+	} else if filterLower == "slurm" {
+		filterBuilder.WriteString(` AND NOT protoPayload.resourceName:"gke"`)
+	}
+
+	filter := filterBuilder.String()
 	WriteToLog(fmt.Sprintf("CheckStockoutErrorsCore using filter: %s", filter))
 
 	processor := func(entry *logging.Entry) ([]string, bool) {
