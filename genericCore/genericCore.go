@@ -29,6 +29,7 @@ import (
 	"strings"
 	"time"
 
+	"cloud.google.com/go/logging"
 	compute "google.golang.org/api/compute/v1"
 	"google.golang.org/api/option"
 )
@@ -697,12 +698,38 @@ func CheckStockoutErrorsCore(ctx context.Context, defaultProjectID, reqProjectID
 		return fmt.Sprintf("No stockout errors (ZONE_RESOURCE_POOL_EXHAUSTED) found in project %s between %s and %s.", projectID, start.Format("2006-01-02"), end.Format("2006-01-02")), nil
 	}
 
-	// Group by zone, track unique instances
-	zoneTimestamps := make(map[string][]string)
-	var instancesToCheck []string
+	var sb strings.Builder
+	
+	service, err := compute.NewService(ctx, option.WithScopes(compute.ComputeScope))
+	if err != nil {
+		return fmt.Sprintf("Failed to initialize compute service: %v\n", err), nil
+	}
+
+	var gkeResults [][]string
+	var slurmResults [][]string
 
 	for _, r := range results {
 		if len(r) >= 3 {
+			inst := r[2]
+			if strings.Contains(strings.ToLower(inst), "gke") {
+				gkeResults = append(gkeResults, r)
+			} else {
+				slurmResults = append(slurmResults, r)
+			}
+		}
+	}
+
+	reportClusterType := func(clusterType string, resultsObj [][]string) {
+		sb.WriteString(fmt.Sprintf("\n--- %s ---\n", clusterType))
+		if len(resultsObj) == 0 {
+			sb.WriteString("No stockout errors found.\n")
+			return
+		}
+
+		zoneTimestamps := make(map[string][]string)
+		var instancesToCheck []string
+
+		for _, r := range resultsObj {
 			ts := r[0]
 			zone := r[1]
 			inst := r[2]
@@ -723,87 +750,62 @@ func CheckStockoutErrorsCore(ctx context.Context, defaultProjectID, reqProjectID
 				}
 			}
 		}
-	}
 
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Found %d stockout error(s) across %d zone(s) in project %s.\n", len(results), len(zoneTimestamps), projectID))
+		sb.WriteString(fmt.Sprintf("Found %d stockout error(s) across %d zone(s).\n", len(resultsObj), len(zoneTimestamps)))
 
-	service, err := compute.NewService(ctx, option.WithScopes(compute.ComputeScope))
-	if err != nil {
-		sb.WriteString(fmt.Sprintf("\nFailed to initialize compute service to check reservations: %v\n", err))
-		return sb.String(), nil
-	}
+		for zone, timestamps := range zoneTimestamps {
+			sb.WriteString(fmt.Sprintf("\nZone: %s\n", zone))
+			sb.WriteString(fmt.Sprintf("  Error Timestamps: %s\n", strings.Join(timestamps, ", ")))
 
-	for zone, timestamps := range zoneTimestamps {
-		sb.WriteString(fmt.Sprintf("\nZone: %s\n", zone))
-		sb.WriteString(fmt.Sprintf("  Error Timestamps: %s\n", strings.Join(timestamps, ", ")))
-
-		// 1. Cross-reference reservations
-		sb.WriteString("  Current Reservations Details:\n")
-		reqRes := service.Reservations.List(projectID, zone)
-		foundAnyRes := false
-		_ = reqRes.Pages(ctx, func(page *compute.ReservationList) error {
-			for _, res := range page.Items {
-				foundAnyRes = true
-				statusStr := res.Status
-				if res.SpecificReservationRequired {
-					statusStr += " (Specific Required)"
+			// 1. Cross-reference reservations
+			sb.WriteString("  Current Reservations Details:\n")
+			reqRes := service.Reservations.List(projectID, zone)
+			foundAnyRes := false
+			_ = reqRes.Pages(ctx, func(page *compute.ReservationList) error {
+				for _, res := range page.Items {
+					foundAnyRes = true
+					statusStr := res.Status
+					if res.SpecificReservationRequired {
+						statusStr += " (Specific Required)"
+					}
+					machineType := "Unknown"
+					if res.SpecificReservation != nil && res.SpecificReservation.InstanceProperties != nil {
+						machineType = GetResourceNameFromURL(res.SpecificReservation.InstanceProperties.MachineType)
+					}
+					sb.WriteString(fmt.Sprintf("    - Name: %s | MachineType: %s | Status: %s\n", res.Name, machineType, statusStr))
 				}
-				machineType := "Unknown"
-				if res.SpecificReservation != nil && res.SpecificReservation.InstanceProperties != nil {
-					machineType = GetResourceNameFromURL(res.SpecificReservation.InstanceProperties.MachineType)
-				}
-				sb.WriteString(fmt.Sprintf("    - Name: %s | MachineType: %s | Status: %s\n", res.Name, machineType, statusStr))
+				return nil
+			})
+			if !foundAnyRes {
+				sb.WriteString("    (No reservations found in this zone)\n")
 			}
-			return nil
-		})
-		if !foundAnyRes {
-			sb.WriteString("    (No reservations found in this zone)\n")
+		}
+
+		sb.WriteString(fmt.Sprintf("\nAffected Instances (%d found): %s\n", len(instancesToCheck), strings.Join(instancesToCheck, ", ")))
+		
+		if len(instancesToCheck) > 0 {
+			sampleInst := instancesToCheck[0] 
+			sb.WriteString(fmt.Sprintf("\nChecking consumption type for sample affected instance: %s\n", sampleInst))
+			
+			sharedReq := CheckConsumptionRequestShared{
+				InstanceName: sampleInst,
+				ProjectID:    projectID,
+			}
+			
+			consumptionInfo, consErr := CheckInstanceConsumptionCore(ctx, sharedReq, defaultProjectID)
+			if consErr != nil {
+				sb.WriteString(fmt.Sprintf("  Failed to check consumption: %v\n", consErr))
+			} else {
+				sb.WriteString(fmt.Sprintf("  Instance Name: %s\n", consumptionInfo.InstanceName))
+				sb.WriteString(fmt.Sprintf("  Provisioning Model: %s\n", consumptionInfo.ProvisioningModel))
+				sb.WriteString(fmt.Sprintf("  Reservation Affinity: %s\n", consumptionInfo.ReservationAffinity))
+				sb.WriteString(fmt.Sprintf("  Consumption Status: %s\n", consumptionInfo.ConsumptionStatus))
+			}
 		}
 	}
 
-	// Group instances into Slurm and GKE
-	var slurmInstances []string
-	var gkeInstances []string
-	for _, inst := range instancesToCheck {
-		if strings.Contains(strings.ToLower(inst), "gke") {
-			gkeInstances = append(gkeInstances, inst)
-		} else {
-			slurmInstances = append(slurmInstances, inst)
-		}
-	}
-
-	// 2. Report Status By Cluster Type
-	reportConsumption := func(clusterType string, instances []string) {
-		sb.WriteString(fmt.Sprintf("\n--- %s ---\n", clusterType))
-		if len(instances) == 0 {
-			sb.WriteString(fmt.Sprintf("No stockout errors found for %s.\n", clusterType))
-			return
-		}
-		
-		sb.WriteString(fmt.Sprintf("Affected Instances (%d found): %s\n", len(instances), strings.Join(instances, ", ")))
-		
-		sampleInst := instances[0] // take the first found instance
-		sb.WriteString(fmt.Sprintf("\nChecking consumption type for sample affected %s instance: %s\n", clusterType, sampleInst))
-		
-		sharedReq := CheckConsumptionRequestShared{
-			InstanceName: sampleInst,
-			ProjectID:    projectID,
-		}
-		
-		consumptionInfo, consErr := CheckInstanceConsumptionCore(ctx, sharedReq, defaultProjectID)
-		if consErr != nil {
-			sb.WriteString(fmt.Sprintf("  Failed to check consumption: %v\n", consErr))
-		} else {
-			sb.WriteString(fmt.Sprintf("  Instance Name: %s\n", consumptionInfo.InstanceName))
-			sb.WriteString(fmt.Sprintf("  Provisioning Model: %s\n", consumptionInfo.ProvisioningModel))
-			sb.WriteString(fmt.Sprintf("  Reservation Affinity: %s\n", consumptionInfo.ReservationAffinity))
-			sb.WriteString(fmt.Sprintf("  Consumption Status: %s\n", consumptionInfo.ConsumptionStatus))
-		}
-	}
-
-	reportConsumption("GKE Clusters", gkeInstances)
-	reportConsumption("Slurm Clusters", slurmInstances)
+	reportClusterType("GKE Clusters", gkeResults)
+	reportClusterType("Slurm Clusters", slurmResults)
 
 	return sb.String(), nil
 }
