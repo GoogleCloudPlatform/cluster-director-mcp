@@ -64,6 +64,7 @@ When the user asks "were there any stock out/ stockout errors (during provisioni
 - **Important Parameters:**
    - `NumberOfDays`: Must default to `14`, unless the user specifies otherwise.
    - `StartDate` / `EndDate`: If the user provides a specific timeframe, please extract and provide those dates. 
+   - `ProjectID`: Optional. Do NOT pass or prompt for a project ID unless the user explicitly provides one. The backend will automatically default to the correct environment.
    - `ClusterFilter`: If the user explicitly asks for "GKE clusters", provide `gke`. If they ask for "Slurm clusters", provide `slurm`. Otherwise, default to `all`.
 - **Reporting:** Read the tool response. It contains the cross-referenced existing Compute Reservations and the current `ConsumptionStatus` of the instances. Report the exact findings back to the user without filtering.
 
