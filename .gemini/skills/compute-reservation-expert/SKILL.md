@@ -57,6 +57,15 @@ When checking a list of instances for consumption/spot status:
   2. **Slurm Nodes:** Send all other names to `cluster-director-slurm__check_instance_consumption`.
 - **Constraint:** Do NOT mix these lists. The GKE tool provides unreliable data for non-GKE nodes.
 
+### 4. Stockout Errors Log Search (search_stockout_errors)
+When the user asks "were there any stock out/ stockout errors (during provisioning - optional)":
+- **Tool:** `search_stockout_errors` (available in both `cluster-director-gke-ai` and `cluster-director-slurm`)
+- **Behavior:** ALWAYS trigger the `search_stockout_errors` tool to search the GCP Logs globally for `ZONE_RESOURCE_POOL_EXHAUSTED`. This single tool call works globally for the project, checking both GKE and Slurm cluster nodes simultaneously. 
+- **Important Parameters:**
+   - `NumberOfDays`: Must default to `14`, unless the user specifies otherwise.
+   - `StartDate` / `EndDate`: If the user provides a specific timeframe, please extract and provide those dates. 
+- **Reporting:** Read the tool response. It contains the cross-referenced existing Compute Reservations and the current `ConsumptionStatus` of the instances. Report the exact findings back to the user without filtering.
+
 ## Protocol & Guardrails
 - **Zero Truncation Rule:** If a reservation contains multiple GPUs or SSDs, you are strictly forbidden from summarizing them (e.g., "16 SSDs"). You must list each entry to ensure hardware interface visibility.
 - **Schema Fidelity:** Ensure your response labels match the API schema logic. If a field is missing in the JSON, report it as "Not Defined."
