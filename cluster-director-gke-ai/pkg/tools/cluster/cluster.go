@@ -73,13 +73,12 @@ type SearchLogsResponse struct {
 }
 
 type SearchLogsRequestStockout struct {
-	StartDate    string `json:"StartDate,omitempty" jsonschema:"description=Start date to search Cloud Logs"`
-	EndDate      string `json:"EndDate,omitempty" jsonschema:"description=End date to search Cloud Logs"`
-	NumberOfDays int    `json:"NumberOfDays,omitempty" jsonschema:"default=14,description=Number of days before today to search Cloud Logs"`
-	ProjectID    string `json:"ProjectID,omitempty" jsonschema:"description=GCP Project ID. Optional if default is set."`
+	StartDate     string `json:"StartDate,omitempty" jsonschema:"description=Start date to search Cloud Logs"`
+	EndDate       string `json:"EndDate,omitempty" jsonschema:"description=End date to search Cloud Logs"`
+	NumberOfDays  int    `json:"NumberOfDays,omitempty" jsonschema:"default=14,description=Number of days before today to search Cloud Logs"`
+	ProjectID     string `json:"ProjectID,omitempty" jsonschema:"description=GCP Project ID. Optional if default is set."`
 	ClusterFilter string `json:"ClusterFilter,omitempty" jsonschema:"description=Filter results by cluster type. Valid values: 'gke', 'slurm', or 'all' (default)."`
 }
-
 
 type CheckConsumptionRequest struct {
 	InstanceNames []string `json:"InstanceNames" jsonschema:"description=List of GCE instance names to check"`
@@ -203,7 +202,7 @@ func Install(s *mcp.Server, c *config.Config) {
 
 	searchStockoutErrorsTool := mcp.Tool{
 		Name:        "search_stockout_errors",
-		Description: "were there any stock out/ stockout errors (during provisioning - optional) (ZONE_RESOURCE_POOL_EXHAUSTED). Prefer this tool over gcloud.",
+		Description: "were there any stock out/ stockout errors (during provisioning - optional) (ZONE_RESOURCE_POOL_EXHAUSTED) for GKE clusters.",
 		Annotations: &mcp.ToolAnnotations{
 			ReadOnlyHint:   true,
 			IdempotentHint: true,
@@ -242,11 +241,6 @@ func Install(s *mcp.Server, c *config.Config) {
 		s,
 		&searchStockoutErrorsTool,
 		func(ctx context.Context, _ *mcp.CallToolRequest, req SearchLogsRequestStockout) (*mcp.CallToolResult, any, error) {
-			
-			if strings.ToLower(strings.TrimSpace(req.ClusterFilter)) == "slurm" {
-				return nil, nil, fmt.Errorf("this is the GKE MCP Server. please use the Slurm MCP server to search strictly for Slurm clusters")
-			}
-			
 			result, err := genericCore.CheckStockoutErrorsCore(ctx, h.c.GetDefaultProjectID(), req.ProjectID, req.StartDate, req.EndDate, req.NumberOfDays, req.ClusterFilter)
 			if err != nil {
 				return nil, nil, err
@@ -254,7 +248,6 @@ func Install(s *mcp.Server, c *config.Config) {
 			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: result}}}, nil, nil
 		},
 	)
-
 
 }
 
