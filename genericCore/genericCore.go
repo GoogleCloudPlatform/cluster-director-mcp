@@ -691,8 +691,8 @@ func CheckStockoutErrorsCore(ctx context.Context, defaultProjectID, reqProjectID
 		return []string{entry.Timestamp.Format(time.RFC3339), zone, instanceName}, true
 	}
 
-	// Fetch up to 50000 recent stockout errors to get an exact count
-	_, results, success := SearchLogsCore(ctx, projectID, filter, 50000, processor)
+	// Fetch up to 100 recent stockout errors
+	_, results, success := SearchLogsCore(ctx, projectID, filter, 100, processor)
 
 	if !success || len(results) == 0 {
 		return fmt.Sprintf("No stockout errors (ZONE_RESOURCE_POOL_EXHAUSTED) found in project %s between %s and %s.", projectID, start.Format("2006-01-02"), end.Format("2006-01-02")), nil
