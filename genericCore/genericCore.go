@@ -691,8 +691,8 @@ func CheckStockoutErrorsCore(ctx context.Context, defaultProjectID, reqProjectID
 		return []string{entry.Timestamp.Format(time.RFC3339), zone, instanceName}, true
 	}
 
-	// Fetch up to 100 recent stockout errors
-	_, results, success := SearchLogsCore(ctx, projectID, filter, 100, processor)
+	// Fetch up to 50000 recent stockout errors to get an exact count
+	_, results, success := SearchLogsCore(ctx, projectID, filter, 50000, processor)
 
 	if !success || len(results) == 0 {
 		return fmt.Sprintf("No stockout errors (ZONE_RESOURCE_POOL_EXHAUSTED) found in project %s between %s and %s.", projectID, start.Format("2006-01-02"), end.Format("2006-01-02")), nil
@@ -755,7 +755,12 @@ func CheckStockoutErrorsCore(ctx context.Context, defaultProjectID, reqProjectID
 
 		for zone, timestamps := range zoneTimestamps {
 			sb.WriteString(fmt.Sprintf("\nZone: %s\n", zone))
-			sb.WriteString(fmt.Sprintf("  Error Timestamps: %s\n", strings.Join(timestamps, ", ")))
+			displayLimit := 10
+			if len(timestamps) > displayLimit {
+				sb.WriteString(fmt.Sprintf("  Error Timestamps: %s ... (and %d more)\n", strings.Join(timestamps[:displayLimit], ", "), len(timestamps)-displayLimit))
+			} else {
+				sb.WriteString(fmt.Sprintf("  Error Timestamps: %s\n", strings.Join(timestamps, ", ")))
+			}
 
 			// 1. Cross-reference reservations
 			sb.WriteString("  Current Reservations Details:\n")
@@ -772,7 +777,7 @@ func CheckStockoutErrorsCore(ctx context.Context, defaultProjectID, reqProjectID
 					if res.SpecificReservation != nil && res.SpecificReservation.InstanceProperties != nil {
 						machineType = GetResourceNameFromURL(res.SpecificReservation.InstanceProperties.MachineType)
 					}
-					sb.WriteString(fmt.Sprintf("    - Name: %s | MachineType: %s | Status: %s\n", res.Name, machineType, statusStr))
+					sb.WriteString(fmt.Sprintf("    - Name: %s | MachineType: %s | Status: %s | Created: %s\n", res.Name, machineType, statusStr, res.CreationTimestamp))
 				}
 				return nil
 			})
@@ -785,7 +790,7 @@ func CheckStockoutErrorsCore(ctx context.Context, defaultProjectID, reqProjectID
 		
 		if len(instancesToCheck) > 0 {
 			sampleInst := instancesToCheck[0] 
-			sb.WriteString(fmt.Sprintf("\nChecking consumption type for sample affected instance: %s\n", sampleInst))
+			sb.WriteString(fmt.Sprintf("\nChecking consumption type for the most recently affected instance: %s\n", sampleInst))
 			
 			sharedReq := CheckConsumptionRequestShared{
 				InstanceName: sampleInst,
