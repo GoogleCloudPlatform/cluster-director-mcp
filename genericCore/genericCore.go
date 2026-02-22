@@ -636,7 +636,7 @@ func SlurpFile(fileName string) (string, error) {
 // CheckStockoutErrorsCore executes a log search query for ZONE_RESOURCE_POOL_EXHAUSTED
 // over a given timeframe. It extracts the affected instance names and timestamps, cross-references
 // reservations, and checks the consumption type of at least one instance.
-func CheckStockoutErrorsCore(ctx context.Context, defaultProjectID, reqProjectID, startDateStr, endDateStr string, numberOfDays int) (string, error) {
+func CheckStockoutErrorsCore(ctx context.Context, defaultProjectID, reqProjectID, startDateStr, endDateStr string, numberOfDays int, clusterFilter string) (string, error) {
 	WriteToLog("CheckStockoutErrorsCore.0000")
 
 	projectID := reqProjectID
@@ -804,8 +804,16 @@ func CheckStockoutErrorsCore(ctx context.Context, defaultProjectID, reqProjectID
 		}
 	}
 
-	reportClusterType("GKE Clusters", gkeResults)
-	reportClusterType("Slurm Clusters", slurmResults)
+	filterLower := strings.ToLower(strings.TrimSpace(clusterFilter))
+	
+	if filterLower == "gke" {
+		reportClusterType("GKE Clusters", gkeResults)
+	} else if filterLower == "slurm" {
+		reportClusterType("Slurm Clusters", slurmResults)
+	} else {
+		reportClusterType("GKE Clusters", gkeResults)
+		reportClusterType("Slurm Clusters", slurmResults)
+	}
 
 	return sb.String(), nil
 }
