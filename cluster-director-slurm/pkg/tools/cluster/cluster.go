@@ -611,6 +611,11 @@ func Install(s *mcp.Server, c *config.Config) {
 		s,
 		&searchStockoutErrorsTool,
 		func(ctx context.Context, _ *mcp.CallToolRequest, req SearchLogsRequestStockout) (*mcp.CallToolResult, any, error) {
+			
+			if strings.ToLower(strings.TrimSpace(req.ClusterFilter)) == "gke" {
+				return nil, nil, fmt.Errorf("this is the Slurm MCP Server. please use the GKE MCP server to search strictly for GKE clusters")
+			}
+			
 			result, err := genericCore.CheckStockoutErrorsCore(ctx, h.c.GetDefaultProjectID(), req.ProjectID, req.StartDate, req.EndDate, req.NumberOfDays, req.ClusterFilter)
 			if err != nil {
 				return nil, nil, err
