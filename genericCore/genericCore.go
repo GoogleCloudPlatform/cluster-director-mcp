@@ -819,7 +819,7 @@ func CheckStockoutErrorsCore(ctx context.Context, defaultProjectID, reqProjectID
 		}
 	}
 
-	filterLower := strings.ToLower(strings.TrimSpace(clusterFilter))
+	filterLower = strings.ToLower(strings.TrimSpace(clusterFilter))
 	
 	if filterLower == "gke" {
 		reportClusterType("GKE Clusters", gkeResults)
