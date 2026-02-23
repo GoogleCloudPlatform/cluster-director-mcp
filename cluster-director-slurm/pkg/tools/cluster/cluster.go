@@ -571,7 +571,7 @@ func Install(s *mcp.Server, c *config.Config) {
 	)
 
 	searchStockoutErrorsTool := mcp.Tool{
-		Name:        "search_stockout_errors",
+		Name:        "search_slurm_stockout_errors",
 		Description: "were there any stock out/ stockout errors (during provisioning - optional) for slurm clusters.",
 		Annotations: &mcp.ToolAnnotations{
 			ReadOnlyHint:   true,

@@ -57,14 +57,14 @@ When checking a list of instances for consumption/spot status:
   2. **Slurm Nodes:** Send all other names to `cluster-director-slurm__check_instance_consumption`.
 - **Constraint:** Do NOT mix these lists. The GKE tool provides unreliable data for non-GKE nodes.
 
-### 4. Stockout Errors Log Search (search_stockout_errors)
+### 4. Stockout Errors Log Search (search_gke_stockout_errors / search_slurm_stockout_errors)
 When the user asks "were there any stock out/ stockout errors (during provisioning - optional)":
-- **Tool:** `search_stockout_errors` 
-   - **CRITICAL ROUTING:** This tool exists on BOTH the `cluster-director-gke-ai` and `cluster-director-slurm` MCP servers. 
-   - If the user asks specifically for GKE clusters, you MUST invoke the tool on the `cluster-director-gke-ai` server and pass `ClusterFilter: "gke"`.
-   - If the user asks specifically for Slurm clusters, you MUST invoke the tool on the `cluster-director-slurm` server and pass `ClusterFilter: "slurm"`.
-   - If the user asks generally for "all clusters" or doesn't specify, you can invoke the tool on either server and pass `ClusterFilter: "all"`.
-- **Behavior:** ALWAYS trigger the `search_stockout_errors` tool to search the GCP Logs globally for `ZONE_RESOURCE_POOL_EXHAUSTED`. This single tool call works globally for the project, checking both GKE and Slurm cluster nodes simultaneously. 
+- **Tools:** `search_gke_stockout_errors` and `search_slurm_stockout_errors` 
+   - **CRITICAL ROUTING:** Because the LLM framework deduplicates identical tool names across servers, we have explicitly exposed distinct names on the MCP endpoints.
+   - If the user asks specifically for GKE clusters, you MUST invoke the `search_gke_stockout_errors` tool on the `cluster-director-gke-ai` server and pass `ClusterFilter: "gke"`.
+   - If the user asks specifically for Slurm clusters, you MUST invoke the `search_slurm_stockout_errors` tool on the `cluster-director-slurm` server and pass `ClusterFilter: "slurm"`.
+   - If the user asks generally for "all clusters" or doesn't specify, you can invoke either tool and pass `ClusterFilter: "all"`.
+- **Behavior:** ALWAYS trigger the appropriate tool to search the GCP Logs globally for `ZONE_RESOURCE_POOL_EXHAUSTED`. This single tool call works globally for the project, checking both GKE and Slurm cluster nodes simultaneously when `ClusterFilter: "all"` is passed. 
 - **Important Parameters:**
    - `NumberOfDays`: Must default to `14`, unless the user specifies otherwise.
    - `StartDate` / `EndDate`: If the user provides a specific timeframe, please extract and provide those dates. 

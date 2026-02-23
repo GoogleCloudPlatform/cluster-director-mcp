@@ -201,7 +201,7 @@ func Install(s *mcp.Server, c *config.Config) {
 	)
 
 	searchStockoutErrorsTool := mcp.Tool{
-		Name:        "search_stockout_errors",
+		Name:        "search_gke_stockout_errors",
 		Description: "were there any stock out/ stockout errors (during provisioning - optional) (ZONE_RESOURCE_POOL_EXHAUSTED) for GKE clusters.",
 		Annotations: &mcp.ToolAnnotations{
 			ReadOnlyHint:   true,
