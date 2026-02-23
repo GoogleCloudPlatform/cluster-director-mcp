@@ -132,6 +132,7 @@ type SearchLogsRequestStockout struct {
 	NumberOfDays  int    `json:"NumberOfDays,omitempty" jsonschema:"default=14,description=Number of days before today to search Cloud Logs"`
 	ProjectID     string `json:"ProjectID,omitempty" jsonschema:"description=GCP Project ID. Optional if default is set."`
 	ClusterFilter string `json:"ClusterFilter,omitempty" jsonschema:"description=Filter results by cluster type. Valid values: 'gke', 'slurm', or 'all' (default)."`
+	ClusterName   string `json:"ClusterName,omitempty" jsonschema:"description=Filter results specifically for a named cluster. Optional."`
 }
 
 type handlers struct {
@@ -603,6 +604,10 @@ func Install(s *mcp.Server, c *config.Config) {
 					"enum":        []string{"gke", "slurm", "all"},
 					"description": "Filter results by cluster type. Provide 'gke' for GKE clusters, 'slurm' for Slurm clusters, or 'all'. Defaults to 'all'.",
 				},
+				"ClusterName": map[string]interface{}{
+					"type":        "string",
+					"description": "Filter results specifically for a named cluster natively. Optional argument.",
+				},
 			},
 			"required": []string{},
 		},
@@ -611,7 +616,7 @@ func Install(s *mcp.Server, c *config.Config) {
 		s,
 		&searchStockoutErrorsTool,
 		func(ctx context.Context, _ *mcp.CallToolRequest, req SearchLogsRequestStockout) (*mcp.CallToolResult, any, error) {
-			result, err := genericCore.CheckStockoutErrorsCore(ctx, h.c.GetDefaultProjectID(), req.ProjectID, req.StartDate, req.EndDate, req.NumberOfDays, req.ClusterFilter)
+			result, err := genericCore.CheckStockoutErrorsCore(ctx, h.c.GetDefaultProjectID(), req.ProjectID, req.StartDate, req.EndDate, req.NumberOfDays, req.ClusterFilter, req.ClusterName)
 			if err != nil {
 				return nil, nil, err
 			}

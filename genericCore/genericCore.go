@@ -636,7 +636,7 @@ func SlurpFile(fileName string) (string, error) {
 // CheckStockoutErrorsCore executes a log search query for ZONE_RESOURCE_POOL_EXHAUSTED
 // over a given timeframe. It extracts the affected instance names and timestamps, cross-references
 // reservations, and checks the consumption type of at least one instance.
-func CheckStockoutErrorsCore(ctx context.Context, defaultProjectID, reqProjectID, startDateStr, endDateStr string, numberOfDays int, clusterFilter string) (string, error) {
+func CheckStockoutErrorsCore(ctx context.Context, defaultProjectID, reqProjectID, startDateStr, endDateStr string, numberOfDays int, clusterFilter string, clusterName string) (string, error) {
 	WriteToLog("CheckStockoutErrorsCore.0000")
 
 	projectID := reqProjectID
@@ -694,6 +694,11 @@ func CheckStockoutErrorsCore(ctx context.Context, defaultProjectID, reqProjectID
 	
 	// Define the base query without cluster restraints
 	baseQuery := fmt.Sprintf(`resource.type="gce_instance" AND protoPayload.status.message:"ZONE_RESOURCE_POOL_EXHAUSTED" AND timestamp >= "%s" AND timestamp <= "%s"`, start.Format(time.RFC3339), end.Format(time.RFC3339))
+	
+	// Dynamically inject the specific cluster name if requested by the AI
+	if clusterName != "" {
+		baseQuery += fmt.Sprintf(` AND protoPayload.resourceName:"%s"`, clusterName)
+	}
 	
 	// Helper to execute and classify a specific cluster query
 	fetchAndClassify := func(isGke bool) {
