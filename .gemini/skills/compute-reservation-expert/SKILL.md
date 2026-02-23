@@ -63,7 +63,7 @@ When the user asks "were there any stock out/ stockout errors (during provisioni
    - **CRITICAL ROUTING:** Because the LLM framework deduplicates identical tool names across servers, we have explicitly exposed distinct names on the MCP endpoints.
    - If the user asks specifically for GKE clusters, you MUST invoke the `search_gke_stockout_errors` tool on the `cluster-director-gke-ai` server and pass `ClusterFilter: "gke"`.
    - If the user asks specifically for Slurm clusters, you MUST invoke the `search_slurm_stockout_errors` tool on the `cluster-director-slurm` server and pass `ClusterFilter: "slurm"`.
-   - If the user asks generally for "all clusters" or doesn't specify, you can invoke either tool and pass `ClusterFilter: "all"`.
+   - If the user asks generally for "all clusters" or doesn't specify, you MUST invoke EXACTLY ONE of the tools (for example, just `search_gke_stockout_errors`) and pass `ClusterFilter: "all"`. DO NOT invoke both tools concurrently, as this will result in duplicated API responses.
 - **Behavior:** ALWAYS trigger the appropriate tool to search the GCP Logs globally for `ZONE_RESOURCE_POOL_EXHAUSTED`. This single tool call works globally for the project, checking both GKE and Slurm cluster nodes simultaneously when `ClusterFilter: "all"` is passed. 
 - **Important Parameters:**
    - `NumberOfDays`: Must default to `14`, unless the user specifies otherwise.
