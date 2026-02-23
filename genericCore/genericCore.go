@@ -666,7 +666,31 @@ func CheckStockoutErrorsCore(ctx context.Context, defaultProjectID, reqProjectID
 	var gkeResults [][]string
 	var slurmResults [][]string
 	
-	filterLower = strings.ToLower(strings.TrimSpace(clusterFilter))
+	filterLower := strings.ToLower(strings.TrimSpace(clusterFilter))
+	
+	processor := func(entry *logging.Entry) ([]string, bool) {
+		zone := ""
+		if entry.Resource != nil && entry.Resource.Labels != nil {
+			zone = entry.Resource.Labels["zone"]
+		}
+		
+		payloadStr := fmt.Sprintf("%v", entry.Payload)
+		instanceName := ""
+		
+		// Attempt to parse instance name from protoPayload resourceName
+		idx := strings.Index(payloadStr, "/instances/")
+		if idx != -1 {
+			sub := payloadStr[idx+len("/instances/"):]
+			endIdx := strings.IndexAny(sub, " \"]}")
+			if endIdx != -1 {
+				instanceName = sub[:endIdx]
+			} else {
+				instanceName = sub
+			}
+		}
+
+		return []string{entry.Timestamp.Format(time.RFC3339), zone, instanceName}, true
+	}
 	
 	// Define the base query without cluster restraints
 	baseQuery := fmt.Sprintf(`resource.type="gce_instance" AND protoPayload.status.message:"ZONE_RESOURCE_POOL_EXHAUSTED" AND timestamp >= "%s" AND timestamp <= "%s"`, start.Format(time.RFC3339), end.Format(time.RFC3339))
@@ -806,8 +830,6 @@ func CheckStockoutErrorsCore(ctx context.Context, defaultProjectID, reqProjectID
 		}
 	}
 
-	filterLower = strings.ToLower(strings.TrimSpace(clusterFilter))
-	
 	if filterLower == "gke" {
 		reportClusterType("GKE Clusters", gkeResults)
 	} else if filterLower == "slurm" {
