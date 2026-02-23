@@ -663,49 +663,50 @@ func CheckStockoutErrorsCore(ctx context.Context, defaultProjectID, reqProjectID
 	}
 
 	// Filter specifically for GCE Instance stockout errors
-	var filterBuilder strings.Builder
-	filterBuilder.WriteString(fmt.Sprintf(`resource.type="gce_instance" AND protoPayload.status.message:"ZONE_RESOURCE_POOL_EXHAUSTED" AND timestamp >= "%s" AND timestamp <= "%s"`, start.Format(time.RFC3339), end.Format(time.RFC3339)))
-
-	// Inject the ClusterFilter directly into the GCP query to avoid 100-log domination by one type
-	filterLower := strings.ToLower(strings.TrimSpace(clusterFilter))
-	if filterLower == "gke" {
-		filterBuilder.WriteString(` AND protoPayload.resourceName:"gke"`)
-	} else if filterLower == "slurm" {
-		filterBuilder.WriteString(` AND NOT protoPayload.resourceName:"gke"`)
-	}
-
-	filter := filterBuilder.String()
-	WriteToLog(fmt.Sprintf("CheckStockoutErrorsCore using filter: %s", filter))
-
-	processor := func(entry *logging.Entry) ([]string, bool) {
-		zone := ""
-		if entry.Resource != nil && entry.Resource.Labels != nil {
-			zone = entry.Resource.Labels["zone"]
+	var gkeResults [][]string
+	var slurmResults [][]string
+	
+	filterLower = strings.ToLower(strings.TrimSpace(clusterFilter))
+	
+	// Define the base query without cluster restraints
+	baseQuery := fmt.Sprintf(`resource.type="gce_instance" AND protoPayload.status.message:"ZONE_RESOURCE_POOL_EXHAUSTED" AND timestamp >= "%s" AND timestamp <= "%s"`, start.Format(time.RFC3339), end.Format(time.RFC3339))
+	
+	// Helper to execute and classify a specific cluster query
+	fetchAndClassify := func(isGke bool) {
+		query := baseQuery
+		if isGke {
+			query += ` AND protoPayload.resourceName:"gke"`
+		} else {
+			query += ` AND NOT protoPayload.resourceName:"gke"`
 		}
 		
-		payloadStr := fmt.Sprintf("%v", entry.Payload)
-		instanceName := ""
+		WriteToLog(fmt.Sprintf("CheckStockoutErrorsCore using filter: %s", query))
+		_, results, _ := SearchLogsCore(ctx, projectID, query, 100, processor)
 		
-		// Attempt to parse instance name from protoPayload resourceName
-		idx := strings.Index(payloadStr, "/instances/")
-		if idx != -1 {
-			sub := payloadStr[idx+len("/instances/"):]
-			endIdx := strings.IndexAny(sub, " \"]}")
-			if endIdx != -1 {
-				instanceName = sub[:endIdx]
-			} else {
-				instanceName = sub
+		for _, r := range results {
+			if len(r) >= 3 {
+				if isGke {
+					gkeResults = append(gkeResults, r)
+				} else {
+					slurmResults = append(slurmResults, r)
+				}
 			}
 		}
-
-		return []string{entry.Timestamp.Format(time.RFC3339), zone, instanceName}, true
+	}
+	
+	// Execute the queries based on the filter
+	if filterLower == "gke" {
+		fetchAndClassify(true)
+	} else if filterLower == "slurm" {
+		fetchAndClassify(false)
+	} else {
+		// "all" - perform both independently to return 100 of each
+		fetchAndClassify(true)
+		fetchAndClassify(false)
 	}
 
-	// Fetch up to 100 recent stockout errors
-	_, results, success := SearchLogsCore(ctx, projectID, filter, 100, processor)
-
-	if !success || len(results) == 0 {
-		return fmt.Sprintf("No stockout errors (ZONE_RESOURCE_POOL_EXHAUSTED) found in project %s between %s and %s.", projectID, start.Format("2006-01-02"), end.Format("2006-01-02")), nil
+	if len(gkeResults) == 0 && len(slurmResults) == 0 {
+		return fmt.Sprintf("No stockout errors (ZONE_RESOURCE_POOL_EXHAUSTED) found in project %s between %s and %s for the requested filter.", projectID, start.Format("2006-01-02"), end.Format("2006-01-02")), nil
 	}
 
 	var sb strings.Builder
@@ -713,20 +714,6 @@ func CheckStockoutErrorsCore(ctx context.Context, defaultProjectID, reqProjectID
 	service, err := compute.NewService(ctx, option.WithScopes(compute.ComputeScope))
 	if err != nil {
 		return fmt.Sprintf("Failed to initialize compute service: %v\n", err), nil
-	}
-
-	var gkeResults [][]string
-	var slurmResults [][]string
-
-	for _, r := range results {
-		if len(r) >= 3 {
-			inst := r[2]
-			if strings.Contains(strings.ToLower(inst), "gke") {
-				gkeResults = append(gkeResults, r)
-			} else {
-				slurmResults = append(slurmResults, r)
-			}
-		}
 	}
 
 	reportClusterType := func(clusterType string, resultsObj [][]string) {
