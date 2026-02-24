@@ -126,6 +126,15 @@ type MaintenanceEventsResponse struct {
 	EventsInfo string `json:"eventsInfo"`
 }
 
+type SearchLogsRequestStockout struct {
+	StartDate     string `json:"StartDate,omitempty" jsonschema:"description=Start date to search Cloud Logs"`
+	EndDate       string `json:"EndDate,omitempty" jsonschema:"description=End date to search Cloud Logs"`
+	NumberOfDays  int    `json:"NumberOfDays,omitempty" jsonschema:"default=14,description=Number of days before today to search Cloud Logs"`
+	ProjectID     string `json:"ProjectID,omitempty" jsonschema:"description=GCP Project ID. Optional if default is set."`
+	ClusterFilter string `json:"ClusterFilter,omitempty" jsonschema:"description=Filter results by cluster type. Valid values: 'gke', 'slurm', or 'all' (default)."`
+	ClusterName   string `json:"ClusterName,omitempty" jsonschema:"description=Filter results specifically for a named cluster. Optional."`
+}
+
 type handlers struct {
 	c *config.Config
 }
@@ -555,6 +564,59 @@ func Install(s *mcp.Server, c *config.Config) {
 		&checkConsumptionTool,
 		func(ctx context.Context, _ *mcp.CallToolRequest, req CheckConsumptionRequest) (*mcp.CallToolResult, any, error) {
 			result, err := h.checkConsumptionMCP(ctx, req)
+			if err != nil {
+				return nil, nil, err
+			}
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: result}}}, nil, nil
+		},
+	)
+
+	searchStockoutErrorsTool := mcp.Tool{
+		Name:        "search_slurm_stockout_errors",
+		Description: "were there any stock out/ stockout errors (during provisioning - optional) for slurm clusters.",
+		Annotations: &mcp.ToolAnnotations{
+			ReadOnlyHint:   true,
+			IdempotentHint: true,
+		},
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"StartDate": map[string]interface{}{
+					"type":        "string",
+					"format":      "date",
+					"description": "Start date to search Cloud Logs. Optional argument.",
+				},
+				"EndDate": map[string]interface{}{
+					"type":        "string",
+					"format":      "date",
+					"description": "End date to search Cloud Logs. Optional argument.",
+				},
+				"NumberOfDays": map[string]interface{}{
+					"type":        "number",
+					"description": "Number of days before today to search Cloud Logs. Defaults to 14. Optional argument.",
+				},
+				"ProjectID": map[string]interface{}{
+					"type":        "string",
+					"description": "GCP Project ID. Optional if default is set.",
+				},
+				"ClusterFilter": map[string]interface{}{
+					"type":        "string",
+					"enum":        []string{"gke", "slurm", "all"},
+					"description": "Filter results by cluster type. Provide 'gke' for GKE clusters, 'slurm' for Slurm clusters, or 'all'. Defaults to 'all'.",
+				},
+				"ClusterName": map[string]interface{}{
+					"type":        "string",
+					"description": "Filter results specifically for a named cluster natively. Optional argument.",
+				},
+			},
+			"required": []string{},
+		},
+	}
+	mcp.AddTool(
+		s,
+		&searchStockoutErrorsTool,
+		func(ctx context.Context, _ *mcp.CallToolRequest, req SearchLogsRequestStockout) (*mcp.CallToolResult, any, error) {
+			result, err := genericCore.CheckStockoutErrorsCore(ctx, h.c.GetDefaultProjectID(), req.ProjectID, req.StartDate, req.EndDate, req.NumberOfDays, req.ClusterFilter, req.ClusterName)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -1316,6 +1378,7 @@ func verifyAndUpdateStatusOfRunningJobsOnClusterAndReturnListOfRunningJobs(proje
 	}
 
 	return returnMessage, returnSuccess
+
 }
 
 func checkCDMcpJobStatusCore(projectID string) (string, error) {

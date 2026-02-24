@@ -29,6 +29,7 @@ import (
 	"strings"
 	"time"
 
+	"cloud.google.com/go/logging"
 	compute "google.golang.org/api/compute/v1"
 	"google.golang.org/api/option"
 )
@@ -630,4 +631,218 @@ func SlurpFile(fileName string) (string, error) {
 		return "", err
 	}
 	return string(content), nil
+}
+
+// CheckStockoutErrorsCore executes a log search query for ZONE_RESOURCE_POOL_EXHAUSTED
+// over a given timeframe. It extracts the affected instance names and timestamps, cross-references
+// reservations, and checks the consumption type of at least one instance.
+func CheckStockoutErrorsCore(ctx context.Context, defaultProjectID, reqProjectID, startDateStr, endDateStr string, numberOfDays int, clusterFilter string, clusterName string) (string, error) {
+	WriteToLog("CheckStockoutErrorsCore.0000")
+
+	projectID := reqProjectID
+	if projectID == "" {
+		projectID = defaultProjectID
+	}
+
+	if numberOfDays <= 0 {
+		numberOfDays = 14
+	}
+
+	start := time.Now().AddDate(0, 0, -numberOfDays)
+	end := time.Now()
+
+	if startDateStr != "" {
+		if parsedStart, ok := ParseTime(startDateStr); ok {
+			start = parsedStart
+		}
+	}
+	if endDateStr != "" {
+		if parsedEnd, ok := ParseTime(endDateStr); ok {
+			end = parsedEnd
+		}
+	}
+
+	// Filter specifically for GCE Instance stockout errors
+	var gkeResults [][]string
+	var slurmResults [][]string
+
+	filterLower := strings.ToLower(strings.TrimSpace(clusterFilter))
+
+	processor := func(entry *logging.Entry) ([]string, bool) {
+		zone := ""
+		if entry.Resource != nil && entry.Resource.Labels != nil {
+			zone = entry.Resource.Labels["zone"]
+		}
+
+		payloadStr := fmt.Sprintf("%v", entry.Payload)
+		instanceName := ""
+
+		// Attempt to parse instance name from protoPayload resourceName
+		idx := strings.Index(payloadStr, "/instances/")
+		if idx != -1 {
+			sub := payloadStr[idx+len("/instances/"):]
+			endIdx := strings.IndexAny(sub, " \"]}")
+			if endIdx != -1 {
+				instanceName = sub[:endIdx]
+			} else {
+				instanceName = sub
+			}
+		}
+
+		return []string{entry.Timestamp.Format(time.RFC3339), zone, instanceName}, true
+	}
+
+	// Define the base query without cluster restraints
+	baseQuery := fmt.Sprintf(`resource.type="gce_instance" AND protoPayload.status.message:"ZONE_RESOURCE_POOL_EXHAUSTED" AND timestamp >= "%s" AND timestamp <= "%s"`, start.Format(time.RFC3339), end.Format(time.RFC3339))
+
+	// Dynamically inject the specific cluster name if requested by the AI
+	if clusterName != "" {
+		baseQuery += fmt.Sprintf(` AND protoPayload.resourceName:"%s"`, clusterName)
+	}
+
+	// Helper to execute and classify a specific cluster query
+	fetchAndClassify := func(isGke bool) {
+		query := baseQuery
+		if isGke {
+			query += ` AND protoPayload.resourceName:"gke"`
+		} else {
+			query += ` AND NOT protoPayload.resourceName:"gke"`
+		}
+
+		WriteToLog(fmt.Sprintf("CheckStockoutErrorsCore using filter: %s", query))
+		_, results, _ := SearchLogsCore(ctx, projectID, query, 100, processor)
+
+		for _, r := range results {
+			if len(r) >= 3 {
+				if isGke {
+					gkeResults = append(gkeResults, r)
+				} else {
+					slurmResults = append(slurmResults, r)
+				}
+			}
+		}
+	}
+
+	// Execute the queries based on the filter
+	if filterLower == "gke" {
+		fetchAndClassify(true)
+	} else if filterLower == "slurm" {
+		fetchAndClassify(false)
+	} else {
+		// "all" - perform both independently to return 100 of each
+		fetchAndClassify(true)
+		fetchAndClassify(false)
+	}
+
+	if len(gkeResults) == 0 && len(slurmResults) == 0 {
+		return fmt.Sprintf("No stockout errors (ZONE_RESOURCE_POOL_EXHAUSTED) found in project %s between %s and %s for the requested filter.", projectID, start.Format("2006-01-02"), end.Format("2006-01-02")), nil
+	}
+
+	var sb strings.Builder
+
+	service, err := compute.NewService(ctx, option.WithScopes(compute.ComputeScope))
+	if err != nil {
+		return fmt.Sprintf("Failed to initialize compute service: %v\n", err), nil
+	}
+
+	reportClusterType := func(clusterType string, resultsObj [][]string) {
+		sb.WriteString(fmt.Sprintf("\n--- %s ---\n", clusterType))
+		if len(resultsObj) == 0 {
+			sb.WriteString("No stockout errors found.\n")
+			return
+		}
+
+		zoneTimestamps := make(map[string][]string)
+		var instancesToCheck []string
+
+		for _, r := range resultsObj {
+			ts := r[0]
+			zone := r[1]
+			inst := r[2]
+
+			if zone != "" {
+				zoneTimestamps[zone] = append(zoneTimestamps[zone], ts)
+			}
+			if inst != "" {
+				alreadyAdded := false
+				for _, existing := range instancesToCheck {
+					if existing == inst {
+						alreadyAdded = true
+						break
+					}
+				}
+				if !alreadyAdded {
+					instancesToCheck = append(instancesToCheck, inst)
+				}
+			}
+		}
+
+		sb.WriteString(fmt.Sprintf("Found %d stockout error(s) across %d zone(s).\n", len(resultsObj), len(zoneTimestamps)))
+
+		for zone, timestamps := range zoneTimestamps {
+			sb.WriteString(fmt.Sprintf("\nZone: %s\n", zone))
+			displayLimit := 10
+			if len(timestamps) > displayLimit {
+				sb.WriteString(fmt.Sprintf("  Error Timestamps: %s ... (and %d more)\n", strings.Join(timestamps[:displayLimit], ", "), len(timestamps)-displayLimit))
+			} else {
+				sb.WriteString(fmt.Sprintf("  Error Timestamps: %s\n", strings.Join(timestamps, ", ")))
+			}
+
+			// 1. Cross-reference reservations
+			sb.WriteString("  Current Reservations Details:\n")
+			reqRes := service.Reservations.List(projectID, zone)
+			foundAnyRes := false
+			_ = reqRes.Pages(ctx, func(page *compute.ReservationList) error {
+				for _, res := range page.Items {
+					foundAnyRes = true
+					statusStr := res.Status
+					if res.SpecificReservationRequired {
+						statusStr += " (Specific Required)"
+					}
+					machineType := "Unknown"
+					if res.SpecificReservation != nil && res.SpecificReservation.InstanceProperties != nil {
+						machineType = GetResourceNameFromURL(res.SpecificReservation.InstanceProperties.MachineType)
+					}
+					sb.WriteString(fmt.Sprintf("    - Name: %s | MachineType: %s | Status: %s | Created: %s\n", res.Name, machineType, statusStr, res.CreationTimestamp))
+				}
+				return nil
+			})
+			if !foundAnyRes {
+				sb.WriteString("    (No reservations found in this zone)\n")
+			}
+		}
+
+		sb.WriteString(fmt.Sprintf("\nAffected Instances (%d found): %s\n", len(instancesToCheck), strings.Join(instancesToCheck, ", ")))
+
+		if len(instancesToCheck) > 0 {
+			sampleInst := instancesToCheck[0]
+			sb.WriteString(fmt.Sprintf("\nChecking consumption type for the most recently affected instance: %s\n", sampleInst))
+
+			sharedReq := CheckConsumptionRequestShared{
+				InstanceName: sampleInst,
+				ProjectID:    projectID,
+			}
+
+			consumptionInfo, consErr := CheckInstanceConsumptionCore(ctx, sharedReq, defaultProjectID)
+			if consErr != nil {
+				sb.WriteString(fmt.Sprintf("  Failed to check consumption: %v\n", consErr))
+			} else {
+				sb.WriteString(fmt.Sprintf("  Instance Name: %s\n", consumptionInfo.InstanceName))
+				sb.WriteString(fmt.Sprintf("  Provisioning Model: %s\n", consumptionInfo.ProvisioningModel))
+				sb.WriteString(fmt.Sprintf("  Reservation Affinity: %s\n", consumptionInfo.ReservationAffinity))
+				sb.WriteString(fmt.Sprintf("  Consumption Status: %s\n", consumptionInfo.ConsumptionStatus))
+			}
+		}
+	}
+
+	if filterLower == "gke" {
+		reportClusterType("GKE Clusters", gkeResults)
+	} else if filterLower == "slurm" {
+		reportClusterType("Slurm Clusters", slurmResults)
+	} else {
+		reportClusterType("GKE Clusters", gkeResults)
+		reportClusterType("Slurm Clusters", slurmResults)
+	}
+
+	return sb.String(), nil
 }
