@@ -634,10 +634,17 @@ func SlurpFile(fileName string) (string, error) {
 }
 
 // CheckStockoutErrorsCore executes a log search query for ZONE_RESOURCE_POOL_EXHAUSTED
-// over a given timeframe. It extracts the affected instance names and timestamps, cross-references
-// reservations, and checks the consumption type of at least one instance.
 func CheckStockoutErrorsCore(ctx context.Context, defaultProjectID, reqProjectID, startDateStr, endDateStr string, numberOfDays int, clusterFilter string, clusterName string) (string, error) {
-	WriteToLog("CheckStockoutErrorsCore.0000")
+	return searchGceErrorsCommon(ctx, defaultProjectID, reqProjectID, startDateStr, endDateStr, numberOfDays, clusterFilter, clusterName, "ZONE_RESOURCE_POOL_EXHAUSTED", "stockout")
+}
+
+// CheckInternalErrorsCore executes a log search query for "Internal error"
+func CheckInternalErrorsCore(ctx context.Context, defaultProjectID, reqProjectID, startDateStr, endDateStr string, numberOfDays int, clusterFilter string, clusterName string) (string, error) {
+	return searchGceErrorsCommon(ctx, defaultProjectID, reqProjectID, startDateStr, endDateStr, numberOfDays, clusterFilter, clusterName, "Internal error", "internal")
+}
+
+func searchGceErrorsCommon(ctx context.Context, defaultProjectID, reqProjectID, startDateStr, endDateStr string, numberOfDays int, clusterFilter string, clusterName string, errorMessage string, errorLabel string) (string, error) {
+	WriteToLog(fmt.Sprintf("searchGceErrorsCommon for %s", errorLabel))
 
 	projectID := reqProjectID
 	if projectID == "" {
@@ -662,7 +669,6 @@ func CheckStockoutErrorsCore(ctx context.Context, defaultProjectID, reqProjectID
 		}
 	}
 
-	// Filter specifically for GCE Instance stockout errors
 	var gkeResults [][]string
 	var slurmResults [][]string
 
@@ -677,7 +683,6 @@ func CheckStockoutErrorsCore(ctx context.Context, defaultProjectID, reqProjectID
 		payloadStr := fmt.Sprintf("%v", entry.Payload)
 		instanceName := ""
 
-		// Attempt to parse instance name from protoPayload resourceName
 		idx := strings.Index(payloadStr, "/instances/")
 		if idx != -1 {
 			sub := payloadStr[idx+len("/instances/"):]
@@ -692,15 +697,14 @@ func CheckStockoutErrorsCore(ctx context.Context, defaultProjectID, reqProjectID
 		return []string{entry.Timestamp.Format(time.RFC3339), zone, instanceName}, true
 	}
 
-	// Define the base query without cluster restraints
-	baseQuery := fmt.Sprintf(`resource.type="gce_instance" AND protoPayload.status.message:"ZONE_RESOURCE_POOL_EXHAUSTED" AND timestamp >= "%s" AND timestamp <= "%s"`, start.Format(time.RFC3339), end.Format(time.RFC3339))
+	// Use : for case-insensitive substring match
+	baseQuery := fmt.Sprintf(`resource.type="gce_instance" AND protoPayload.status.message:"%s" AND timestamp >= "%s" AND timestamp <= "%s"`, errorMessage, start.Format(time.RFC3339), end.Format(time.RFC3339))
 
 	// Dynamically inject the specific cluster name if requested by the AI
 	if clusterName != "" {
 		baseQuery += fmt.Sprintf(` AND protoPayload.resourceName:"%s"`, clusterName)
 	}
 
-	// Helper to execute and classify a specific cluster query
 	fetchAndClassify := func(isGke bool) {
 		query := baseQuery
 		if isGke {
@@ -709,7 +713,7 @@ func CheckStockoutErrorsCore(ctx context.Context, defaultProjectID, reqProjectID
 			query += ` AND NOT protoPayload.resourceName:"gke"`
 		}
 
-		WriteToLog(fmt.Sprintf("CheckStockoutErrorsCore using filter: %s", query))
+		WriteToLog(fmt.Sprintf("searchGceErrorsCommon using filter: %s", query))
 		_, results, _ := SearchLogsCore(ctx, projectID, query, 100, processor)
 
 		for _, r := range results {
@@ -723,23 +727,20 @@ func CheckStockoutErrorsCore(ctx context.Context, defaultProjectID, reqProjectID
 		}
 	}
 
-	// Execute the queries based on the filter
 	if filterLower == "gke" {
 		fetchAndClassify(true)
 	} else if filterLower == "slurm" {
 		fetchAndClassify(false)
 	} else {
-		// "all" - perform both independently to return 100 of each
 		fetchAndClassify(true)
 		fetchAndClassify(false)
 	}
 
 	if len(gkeResults) == 0 && len(slurmResults) == 0 {
-		return fmt.Sprintf("No stockout errors (ZONE_RESOURCE_POOL_EXHAUSTED) found in project %s between %s and %s for the requested filter.", projectID, start.Format("2006-01-02"), end.Format("2006-01-02")), nil
+		return fmt.Sprintf("No %s errors found in project %s between %s and %s for the requested filter.", errorLabel, projectID, start.Format("2006-01-02"), end.Format("2006-01-02")), nil
 	}
 
 	var sb strings.Builder
-
 	service, err := compute.NewService(ctx, option.WithScopes(compute.ComputeScope))
 	if err != nil {
 		return fmt.Sprintf("Failed to initialize compute service: %v\n", err), nil
@@ -748,7 +749,7 @@ func CheckStockoutErrorsCore(ctx context.Context, defaultProjectID, reqProjectID
 	reportClusterType := func(clusterType string, resultsObj [][]string) {
 		sb.WriteString(fmt.Sprintf("\n--- %s ---\n", clusterType))
 		if len(resultsObj) == 0 {
-			sb.WriteString("No stockout errors found.\n")
+			sb.WriteString(fmt.Sprintf("No %s errors found.\n", errorLabel))
 			return
 		}
 
@@ -777,7 +778,7 @@ func CheckStockoutErrorsCore(ctx context.Context, defaultProjectID, reqProjectID
 			}
 		}
 
-		sb.WriteString(fmt.Sprintf("Found %d stockout error(s) across %d zone(s).\n", len(resultsObj), len(zoneTimestamps)))
+		sb.WriteString(fmt.Sprintf("Found %d %s error(s) across %d zone(s).\n", len(resultsObj), errorLabel, len(zoneTimestamps)))
 
 		for zone, timestamps := range zoneTimestamps {
 			sb.WriteString(fmt.Sprintf("\nZone: %s\n", zone))
@@ -788,7 +789,6 @@ func CheckStockoutErrorsCore(ctx context.Context, defaultProjectID, reqProjectID
 				sb.WriteString(fmt.Sprintf("  Error Timestamps: %s\n", strings.Join(timestamps, ", ")))
 			}
 
-			// 1. Cross-reference reservations
 			sb.WriteString("  Current Reservations Details:\n")
 			reqRes := service.Reservations.List(projectID, zone)
 			foundAnyRes := false
