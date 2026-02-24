@@ -28,6 +28,16 @@ echo "Updating cluster-director-mcp..."
 (git fetch --all 2>&1 > /dev/null ; git pull 2>&1 > /dev/null ; make -j  2>&1 > /dev/null) &
 git_pull_make_pid=$!
 
+# Sync Go dependencies
+echo "----"
+echo "Syncing Go dependencies..."
+go mod tidy
+if [ $? -ne 0 ]; then
+  echo "Error: 'go mod tidy' failed. Please ensure Go is installed."
+  echo "If Go is already installed, check for lack of disk space (run 'df -h') or network issues."
+  exit 1
+fi
+
 # Clean scratch
 echo "----"
 echo "Cleaning Scratch space..."
