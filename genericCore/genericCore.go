@@ -27,6 +27,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"cloud.google.com/go/logging"
@@ -37,6 +38,10 @@ import (
 const maxLogFiles = 100
 
 var logger *slog.Logger
+
+var seenFiles sync.Map
+
+var projectRoot string
 
 // GcloudListItem represents a single item from the gcloud list command's JSON output.
 type GcloudListItem struct {
@@ -59,6 +64,56 @@ type InstanceConsumptionStatus struct {
 	ConsumptionStatus   string `json:"consumption_status"`
 }
 
+func init() {
+	// Grab the current working directory when the program starts
+	projectRoot, _ = os.Getwd()
+}
+
+func formatFilePath(fullPath string) string {
+	// Try to get the already-calculated short path.
+	// We use an empty string "" as a placeholder to claim the "first" spot.
+	val, alreadySeen := seenFiles.LoadOrStore(fullPath, "")
+
+	if !alreadySeen {
+		// First time seeing this file! We need to calculate the short path.
+		shortPath := ""
+
+		if projectRoot != "" {
+			rel, err := filepath.Rel(projectRoot, fullPath)
+			if err == nil && !strings.HasPrefix(rel, "..") {
+				shortPath = rel
+			}
+		}
+
+		// Fallback: If Rel failed or produced an ugly path
+		if shortPath == "" {
+			if idx := strings.Index(fullPath, "cluster-director-mcp/"); idx != -1 {
+				shortPath = fullPath[idx+len("cluster-director-mcp/"):]
+			} else {
+				shortPath = filepath.Base(fullPath)
+			}
+		}
+
+		// Update the map to hold the actual calculated short path
+		seenFiles.Store(fullPath, shortPath)
+
+		// The requirement is to return the absolute path the *first* time
+		return fullPath
+	}
+
+	// If we have already seen it, grab the string from the map
+	shortPath := val.(string)
+
+	// Edge case: If two goroutines hit this at the exact same millisecond,
+	// one might read the "" placeholder before the other finishes calculating.
+	// If so, just safely print the full path.
+	if shortPath == "" {
+		return fullPath
+	}
+
+	// Return the cached short path!
+	return shortPath
+}
 func WriteToLog(message string) {
 
 	message = strings.ReplaceAll(message, "\n", " | ")
@@ -168,7 +223,8 @@ func (h *PlainHandler) Handle(ctx context.Context, r slog.Record) error {
 	if h.opts.AddSource && r.PC != 0 {
 		fs := runtime.CallersFrames([]uintptr{r.PC})
 		f, _ := fs.Next()
-		sourceStr = fmt.Sprintf("%s:%d", f.File, f.Line)
+		displayPath := formatFilePath(f.File)
+		sourceStr = fmt.Sprintf("%s:%d", displayPath, f.Line)
 	}
 
 	// 3. Format Level
