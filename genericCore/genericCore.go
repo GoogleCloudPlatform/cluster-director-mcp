@@ -32,6 +32,8 @@ import (
 	"cloud.google.com/go/logging"
 	compute "google.golang.org/api/compute/v1"
 	"google.golang.org/api/option"
+	"cloud.google.com/go/logging/logadmin"
+	"google.golang.org/api/iterator"
 )
 
 const maxLogFiles = 100
@@ -634,17 +636,10 @@ func SlurpFile(fileName string) (string, error) {
 }
 
 // CheckStockoutErrorsCore executes a log search query for ZONE_RESOURCE_POOL_EXHAUSTED
+// over a given timeframe. It extracts the affected instance names and timestamps, cross-references
+// reservations, and checks the consumption type of at least one instance.
 func CheckStockoutErrorsCore(ctx context.Context, defaultProjectID, reqProjectID, startDateStr, endDateStr string, numberOfDays int, clusterFilter string, clusterName string) (string, error) {
-	return searchGceErrorsCommon(ctx, defaultProjectID, reqProjectID, startDateStr, endDateStr, numberOfDays, clusterFilter, clusterName, "ZONE_RESOURCE_POOL_EXHAUSTED", "stockout")
-}
-
-// CheckInternalErrorsCore executes a log search query for "Internal error"
-func CheckInternalErrorsCore(ctx context.Context, defaultProjectID, reqProjectID, startDateStr, endDateStr string, numberOfDays int, clusterFilter string, clusterName string) (string, error) {
-	return searchGceErrorsCommon(ctx, defaultProjectID, reqProjectID, startDateStr, endDateStr, numberOfDays, clusterFilter, clusterName, "Internal error", "internal")
-}
-
-func searchGceErrorsCommon(ctx context.Context, defaultProjectID, reqProjectID, startDateStr, endDateStr string, numberOfDays int, clusterFilter string, clusterName string, errorMessage string, errorLabel string) (string, error) {
-	WriteToLog(fmt.Sprintf("searchGceErrorsCommon for %s", errorLabel))
+	WriteToLog("CheckStockoutErrorsCore.0000")
 
 	projectID := reqProjectID
 	if projectID == "" {
@@ -669,6 +664,7 @@ func searchGceErrorsCommon(ctx context.Context, defaultProjectID, reqProjectID, 
 		}
 	}
 
+	// Filter specifically for GCE Instance stockout errors
 	var gkeResults [][]string
 	var slurmResults [][]string
 
@@ -683,6 +679,7 @@ func searchGceErrorsCommon(ctx context.Context, defaultProjectID, reqProjectID, 
 		payloadStr := fmt.Sprintf("%v", entry.Payload)
 		instanceName := ""
 
+		// Attempt to parse instance name from protoPayload resourceName
 		idx := strings.Index(payloadStr, "/instances/")
 		if idx != -1 {
 			sub := payloadStr[idx+len("/instances/"):]
@@ -697,14 +694,15 @@ func searchGceErrorsCommon(ctx context.Context, defaultProjectID, reqProjectID, 
 		return []string{entry.Timestamp.Format(time.RFC3339), zone, instanceName}, true
 	}
 
-	// Use : for case-insensitive substring match
-	baseQuery := fmt.Sprintf(`resource.type="gce_instance" AND protoPayload.status.message:"%s" AND timestamp >= "%s" AND timestamp <= "%s"`, errorMessage, start.Format(time.RFC3339), end.Format(time.RFC3339))
+	// Define the base query without cluster restraints
+	baseQuery := fmt.Sprintf(`resource.type="gce_instance" AND protoPayload.status.message:"ZONE_RESOURCE_POOL_EXHAUSTED" AND timestamp >= "%s" AND timestamp <= "%s"`, start.Format(time.RFC3339), end.Format(time.RFC3339))
 
 	// Dynamically inject the specific cluster name if requested by the AI
 	if clusterName != "" {
 		baseQuery += fmt.Sprintf(` AND protoPayload.resourceName:"%s"`, clusterName)
 	}
 
+	// Helper to execute and classify a specific cluster query
 	fetchAndClassify := func(isGke bool) {
 		query := baseQuery
 		if isGke {
@@ -713,7 +711,7 @@ func searchGceErrorsCommon(ctx context.Context, defaultProjectID, reqProjectID, 
 			query += ` AND NOT protoPayload.resourceName:"gke"`
 		}
 
-		WriteToLog(fmt.Sprintf("searchGceErrorsCommon using filter: %s", query))
+		WriteToLog(fmt.Sprintf("CheckStockoutErrorsCore using filter: %s", query))
 		_, results, _ := SearchLogsCore(ctx, projectID, query, 100, processor)
 
 		for _, r := range results {
@@ -727,20 +725,23 @@ func searchGceErrorsCommon(ctx context.Context, defaultProjectID, reqProjectID, 
 		}
 	}
 
+	// Execute the queries based on the filter
 	if filterLower == "gke" {
 		fetchAndClassify(true)
 	} else if filterLower == "slurm" {
 		fetchAndClassify(false)
 	} else {
+		// "all" - perform both independently to return 100 of each
 		fetchAndClassify(true)
 		fetchAndClassify(false)
 	}
 
 	if len(gkeResults) == 0 && len(slurmResults) == 0 {
-		return fmt.Sprintf("No %s errors found in project %s between %s and %s for the requested filter.", errorLabel, projectID, start.Format("2006-01-02"), end.Format("2006-01-02")), nil
+		return fmt.Sprintf("No stockout errors (ZONE_RESOURCE_POOL_EXHAUSTED) found in project %s between %s and %s for the requested filter.", projectID, start.Format("2006-01-02"), end.Format("2006-01-02")), nil
 	}
 
 	var sb strings.Builder
+
 	service, err := compute.NewService(ctx, option.WithScopes(compute.ComputeScope))
 	if err != nil {
 		return fmt.Sprintf("Failed to initialize compute service: %v\n", err), nil
@@ -749,7 +750,7 @@ func searchGceErrorsCommon(ctx context.Context, defaultProjectID, reqProjectID, 
 	reportClusterType := func(clusterType string, resultsObj [][]string) {
 		sb.WriteString(fmt.Sprintf("\n--- %s ---\n", clusterType))
 		if len(resultsObj) == 0 {
-			sb.WriteString(fmt.Sprintf("No %s errors found.\n", errorLabel))
+			sb.WriteString("No stockout errors found.\n")
 			return
 		}
 
@@ -778,7 +779,7 @@ func searchGceErrorsCommon(ctx context.Context, defaultProjectID, reqProjectID, 
 			}
 		}
 
-		sb.WriteString(fmt.Sprintf("Found %d %s error(s) across %d zone(s).\n", len(resultsObj), errorLabel, len(zoneTimestamps)))
+		sb.WriteString(fmt.Sprintf("Found %d stockout error(s) across %d zone(s).\n", len(resultsObj), len(zoneTimestamps)))
 
 		for zone, timestamps := range zoneTimestamps {
 			sb.WriteString(fmt.Sprintf("\nZone: %s\n", zone))
@@ -789,6 +790,7 @@ func searchGceErrorsCommon(ctx context.Context, defaultProjectID, reqProjectID, 
 				sb.WriteString(fmt.Sprintf("  Error Timestamps: %s\n", strings.Join(timestamps, ", ")))
 			}
 
+			// 1. Cross-reference reservations
 			sb.WriteString("  Current Reservations Details:\n")
 			reqRes := service.Reservations.List(projectID, zone)
 			foundAnyRes := false
@@ -835,6 +837,235 @@ func searchGceErrorsCommon(ctx context.Context, defaultProjectID, reqProjectID, 
 		}
 	}
 
+	if filterLower == "gke" {
+		reportClusterType("GKE Clusters", gkeResults)
+	} else if filterLower == "slurm" {
+		reportClusterType("Slurm Clusters", slurmResults)
+	} else {
+		reportClusterType("GKE Clusters", gkeResults)
+		reportClusterType("Slurm Clusters", slurmResults)
+	}
+
+	return sb.String(), nil
+}
+
+// CheckInternalErrorsCore executes a log search query for "Internal error"
+// over a given timeframe. It extracts the affected instance names and timestamps,
+// prints the reservations in the affected zone, and checks the consumption type.
+func CheckInternalErrorsCore(ctx context.Context, defaultProjectID, reqProjectID, startDateStr, endDateStr string, numberOfDays int, clusterFilter string, clusterName string) (string, error) {
+	WriteToLog("CheckInternalErrorsCore for Internal error")
+
+	projectID := reqProjectID
+	if projectID == "" {
+		projectID = defaultProjectID
+	}
+
+	if numberOfDays <= 0 {
+		numberOfDays = 14
+	}
+
+	start := time.Now().AddDate(0, 0, -numberOfDays)
+	end := time.Now().UTC()
+
+	// Assuming ParseTime is available in your package as used in searchGceErrorsCommon
+	if startDateStr != "" {
+		if parsedStart, ok := ParseTime(startDateStr); ok {
+			start = parsedStart
+		}
+	}
+	if endDateStr != "" {
+		if parsedEnd, ok := ParseTime(endDateStr); ok {
+			end = parsedEnd
+		}
+	}
+
+	client, err := logadmin.NewClient(ctx, projectID)
+	if err != nil {
+		return "", fmt.Errorf("failed to create logging client: %w", err)
+	}
+	defer client.Close()
+
+	service, err := compute.NewService(ctx, option.WithScopes(compute.ComputeScope))
+	if err != nil {
+		return "", fmt.Errorf("failed to initialize compute service: %w", err)
+	}
+
+	var gkeResults [][]string
+	var slurmResults [][]string
+
+	filterLower := strings.ToLower(strings.TrimSpace(clusterFilter))
+
+	// Construct the query string targeting jsonPayload and the specific error string
+	queryParts := []string{
+		fmt.Sprintf(`timestamp >= "%s"`, start.Format(time.RFC3339)),
+		fmt.Sprintf(`timestamp <= "%s"`, end.Format(time.RFC3339)),
+		`jsonPayload.message:"Internal error"`,
+	}
+
+	if clusterName != "" {
+		queryParts = append(queryParts, fmt.Sprintf(`labels.cluster_name="%s"`, clusterName))
+	}
+
+	logFilter := strings.Join(queryParts, " AND ")
+	WriteToLog(fmt.Sprintf("CheckInternalErrorsCore using filter: %s", logFilter))
+
+	it := client.Entries(ctx, logadmin.Filter(logFilter))
+
+	// Iterate logs and separate them into GKE and Slurm buckets
+	for {
+		entry, err := it.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return "", fmt.Errorf("error iterating logs: %w", err)
+		}
+
+		ts := entry.Timestamp.Format(time.RFC3339)
+		
+		// Extract zone from resource labels
+		zone := ""
+		if entry.Resource != nil && entry.Resource.Labels != nil {
+			if z, ok := entry.Resource.Labels["zone"]; ok {
+				zone = z
+			}
+		}
+
+		// Extract instance hostname from labels (Slurm logs) or resource labels
+		instanceName := ""
+		if entry.Labels != nil {
+			if host, ok := entry.Labels["hostname"]; ok {
+				instanceName = host
+			}
+		}
+		if instanceName == "" && entry.Resource != nil && entry.Resource.Labels != nil {
+			if inst, ok := entry.Resource.Labels["instance_id"]; ok {
+				instanceName = inst 
+			}
+		}
+
+		// Classify the log as GKE or Slurm
+		// Slurm logs typically have 'slurmsync.log' in the path or a 'cluster_name' label
+		isSlurm := false
+		if entry.Labels != nil {
+			if path, ok := entry.Labels["agent.googleapis.com/log_file_path"]; ok && strings.Contains(path, "slurm") {
+				isSlurm = true
+			}
+			if _, ok := entry.Labels["cluster_name"]; ok {
+				isSlurm = true
+			}
+		}
+		isGke := !isSlurm
+
+		r := []string{ts, zone, instanceName}
+
+		if isGke && (filterLower == "gke" || filterLower == "all" || filterLower == "") {
+			gkeResults = append(gkeResults, r)
+		}
+		if isSlurm && (filterLower == "slurm" || filterLower == "all" || filterLower == "") {
+			slurmResults = append(slurmResults, r)
+		}
+	}
+
+	if len(gkeResults) == 0 && len(slurmResults) == 0 {
+		return fmt.Sprintf("No Internal errors found in project %s between %s and %s for the requested filter.", projectID, start.Format("2006-01-02"), end.Format("2006-01-02")), nil
+	}
+
+	var sb strings.Builder
+
+	// Reusable closure to generate the output string formatted exactly like searchGceErrorsCommon
+	reportClusterType := func(clusterType string, resultsObj [][]string) {
+		sb.WriteString(fmt.Sprintf("\n--- %s ---\n", clusterType))
+		if len(resultsObj) == 0 {
+			sb.WriteString("No Internal errors found.\n")
+			return
+		}
+
+		zoneTimestamps := make(map[string][]string)
+		var instancesToCheck []string
+
+		for _, r := range resultsObj {
+			ts := r[0]
+			zone := r[1]
+			inst := r[2]
+
+			if zone != "" {
+				zoneTimestamps[zone] = append(zoneTimestamps[zone], ts)
+			}
+			if inst != "" {
+				alreadyAdded := false
+				for _, existing := range instancesToCheck {
+					if existing == inst {
+						alreadyAdded = true
+						break
+					}
+				}
+				if !alreadyAdded {
+					instancesToCheck = append(instancesToCheck, inst)
+				}
+			}
+		}
+
+		sb.WriteString(fmt.Sprintf("Found %d Internal error(s) across %d zone(s).\n", len(resultsObj), len(zoneTimestamps)))
+
+		// 1. Check if log timestamp overlaps with reservations (Display reservations per zone)
+		for zone, timestamps := range zoneTimestamps {
+			sb.WriteString(fmt.Sprintf("\nZone: %s\n", zone))
+			displayLimit := 10
+			if len(timestamps) > displayLimit {
+				sb.WriteString(fmt.Sprintf("  Error Timestamps: %s ... (and %d more)\n", strings.Join(timestamps[:displayLimit], ", "), len(timestamps)-displayLimit))
+			} else {
+				sb.WriteString(fmt.Sprintf("  Error Timestamps: %s\n", strings.Join(timestamps, ", ")))
+			}
+
+			sb.WriteString("  Current Reservations Details:\n")
+			reqRes := service.Reservations.List(projectID, zone)
+			foundAnyRes := false
+			_ = reqRes.Pages(ctx, func(page *compute.ReservationList) error {
+				for _, res := range page.Items {
+					foundAnyRes = true
+					statusStr := res.Status
+					if res.SpecificReservationRequired {
+						statusStr += " (Specific Required)"
+					}
+					machineType := "Unknown"
+					if res.SpecificReservation != nil && res.SpecificReservation.InstanceProperties != nil {
+						machineType = GetResourceNameFromURL(res.SpecificReservation.InstanceProperties.MachineType)
+					}
+					sb.WriteString(fmt.Sprintf("    - Name: %s | MachineType: %s | Status: %s | Created: %s\n", res.Name, machineType, statusStr, res.CreationTimestamp))
+				}
+				return nil
+			})
+			if !foundAnyRes {
+				sb.WriteString("    (No reservations found in this zone)\n")
+			}
+		}
+
+		sb.WriteString(fmt.Sprintf("\nAffected Instances (%d found): %s\n", len(instancesToCheck), strings.Join(instancesToCheck, ", ")))
+
+		// 2. Check consumption type for the hostname
+		if len(instancesToCheck) > 0 {
+			sampleInst := instancesToCheck[0]
+			sb.WriteString(fmt.Sprintf("\nChecking consumption type for the most recently affected instance: %s\n", sampleInst))
+
+			sharedReq := CheckConsumptionRequestShared{
+				InstanceName: sampleInst,
+				ProjectID:    projectID,
+			}
+
+			consumptionInfo, consErr := CheckInstanceConsumptionCore(ctx, sharedReq, defaultProjectID)
+			if consErr != nil {
+				sb.WriteString(fmt.Sprintf("  Failed to check consumption: %v\n", consErr))
+			} else {
+				sb.WriteString(fmt.Sprintf("  Instance Name: %s\n", consumptionInfo.InstanceName))
+				sb.WriteString(fmt.Sprintf("  Provisioning Model: %s\n", consumptionInfo.ProvisioningModel))
+				sb.WriteString(fmt.Sprintf("  Reservation Affinity: %s\n", consumptionInfo.ReservationAffinity))
+				sb.WriteString(fmt.Sprintf("  Consumption Status: %s\n", consumptionInfo.ConsumptionStatus))
+			}
+		}
+	}
+
+	// Output Formatting Execution
 	if filterLower == "gke" {
 		reportClusterType("GKE Clusters", gkeResults)
 	} else if filterLower == "slurm" {
