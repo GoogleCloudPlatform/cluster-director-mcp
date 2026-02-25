@@ -517,6 +517,8 @@ func CheckInstanceConsumptionCore(ctx context.Context, req CheckConsumptionReque
 	req.Zone = strings.TrimSpace(req.Zone)
 	req.ProjectID = strings.TrimSpace(req.ProjectID)
 
+	WriteToLog(fmt.Sprintf("Evaluating consumption status for instance: '%s'", req.InstanceName))
+
 	var status InstanceConsumptionStatus
 	status.InstanceName = req.InstanceName
 	status.Zone = req.Zone
