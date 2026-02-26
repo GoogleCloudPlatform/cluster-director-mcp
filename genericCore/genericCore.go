@@ -72,12 +72,9 @@ func init() {
 }
 
 func formatFilePath(fullPath string) string {
-	// Try to get the already-calculated short path.
-	// We use an empty string "" as a placeholder to claim the "first" spot.
 	val, alreadySeen := seenFiles.LoadOrStore(fullPath, "")
 
 	if !alreadySeen {
-		// First time seeing this file! We need to calculate the short path.
 		shortPath := ""
 
 		if projectRoot != "" {
@@ -96,19 +93,13 @@ func formatFilePath(fullPath string) string {
 			}
 		}
 
-		// Update the map to hold the actual calculated short path
 		seenFiles.Store(fullPath, shortPath)
 
-		// The requirement is to return the absolute path the *first* time
 		return fullPath
 	}
 
-	// If we have already seen it, grab the string from the map
 	shortPath := val.(string)
 
-	// Edge case: If two goroutines hit this at the exact same millisecond,
-	// one might read the "" placeholder before the other finishes calculating.
-	// If so, just safely print the full path.
 	if shortPath == "" {
 		return fullPath
 	}
@@ -116,6 +107,7 @@ func formatFilePath(fullPath string) string {
 	// Return the cached short path!
 	return shortPath
 }
+
 func WriteToLog(message string) {
 
 	message = strings.ReplaceAll(message, "\n", " | ")
