@@ -1581,6 +1581,7 @@ func getVersionCheckStatus(projectID string, jobObj *persistence.LongRunningJob)
 
 // Implementation
 func (h *handlers) checkConsumptionMCP(ctx context.Context, req CheckConsumptionRequest) (string, error) {
+	genericCore.WriteToLog(fmt.Sprintf("Received MCP tool request: check_instance_consumption for %d instances", len(req.InstanceNames)))
 	return genericCore.ProcessConsumptionRequest(
 		ctx,
 		req.InstanceNames,
