@@ -16,54 +16,16 @@ package genericCore
 
 import (
 	"bufio"
-	"context"
+	"errors"
 	"fmt"
-	"os/exec"
+	"io"
+	"net/http"
+	"os"
 	"strings"
-
-	"cloud.google.com/go/logging"
-	"cloud.google.com/go/logging/logadmin"
-	"golang.org/x/oauth2/google"
-	"google.golang.org/api/iterator"
-	"google.golang.org/protobuf/types/known/structpb"
+	"time"
 )
 
-var authToken string
-
-// GetGCloudToken executes the 'gcloud auth print-access-token' command
-// and caches the OAuth token.
-func GetGCloudToken() bool {
-	if authToken != "" {
-		return true
-	}
-
-	WriteToLog("Fetching OAuth2 bearer token natively via ADC...")
-
-	// Use the default context and cloud-platform scope
-	ctx := context.Background()
-	scopes := []string{"https://www.googleapis.com/auth/cloud-platform"}
-
-	ts, err := google.DefaultTokenSource(ctx, scopes...)
-	if err != nil {
-		WriteToLog(fmt.Sprintf("Failed to find Default Token Source: %v", err))
-		return false
-	}
-
-	token, err := ts.Token()
-	if err != nil {
-		WriteToLog(fmt.Sprintf("Error retrieving native token: %v", err))
-		return false
-	}
-
-	authToken = token.AccessToken
-	WriteToLog("Successfully retrieved access token natively.")
-	return true
-}
-
-// GetCachedAuthToken returns the currently cached OAuth token.
-func GetCachedAuthToken() string {
-	return authToken
-}
+const LOCAL_HOST_SCRATCH_DIR = "cluster-director-mcp.scratch"
 
 func FilterString(rawSSHOut string, substringsToRemove []string) string {
 	var b strings.Builder
@@ -102,111 +64,214 @@ func FilterSSHOutput(rawSSHOut string) string {
 		"WARNING:"})
 }
 
-func RunSSHOnNode(hostName string, project string, zone string, cmd string) (string, bool) {
-	sshCmd := exec.Command("/usr/bin/gcloud",
-		"compute",
-		"ssh",
-		hostName,
-		"--project="+project,
-		"--zone="+zone,
-		"--tunnel-through-iap",
-		"--command",
-		cmd)
+func ParseTime(dateStr string) (time.Time, bool) {
 
-	output, err := sshCmd.CombinedOutput()
-	rawSSHOutput := strings.TrimSpace(string(output))
-	filteredSSHOutput := FilterSSHOutput(rawSSHOutput)
-	WriteToLog(string(filteredSSHOutput))
-	if err != nil {
-		WriteToLog(fmt.Sprintf("Error running SSH cmd: %s %v", cmd, err))
-		return filteredSSHOutput, false
+	layouts := []string{
+		time.RFC3339,       // ISO 8601
+		"2006-01-02",       // YYYY-MM-DD
+		"01/02/2006",       // MM/DD/YYYY
+		"02-01-2006 15:04", // DD-MM-YYYY HH:MM
+		"Jan 2, 2006",      // Month Day, Year
+		"02 Jan 2006",      // Date (DD Mon YYYY) e.g., "25 Oct 2023"
+		"Jan 2",            // Date, Month (Mon DD) e.g., "Oct 25"
+		"02",               // Just the day
 	}
 
-	return filteredSSHOutput, true
+	parsedTime, formatUsed, err := parseWithFallback(dateStr, layouts)
+	if err != nil {
+		WriteToLog("Could not parse date string: " + dateStr)
+		return time.Now(), false
+	}
+
+	// Post-processing: Infer missing data based on the format used
+	now := time.Now()
+
+	switch formatUsed {
+	case "02":
+		// Case: User gave only "Day". Use Current Year and Current Month.
+		parsedTime = time.Date(now.Year(), now.Month(), parsedTime.Day(), 0, 0, 0, 0, time.Local)
+
+	case "Jan 2":
+		// Case: User gave "Month Day". Use Current Year.
+		parsedTime = parsedTime.AddDate(now.Year(), 0, 0)
+	}
+	WriteToLog(fmt.Sprintf("Successfully parsed input date string %s \nParsed Time: %v\nFormat Used: %s\n", dateStr, parsedTime, formatUsed))
+
+	return parsedTime, true
 }
 
-func RunSCP(project string, zone string, srcFile string, destFile string) (string, bool) {
-	finalSCPCmd := exec.Command("/usr/bin/gcloud",
-		"compute",
-		"scp",
-		"--project="+project,
-		"--zone="+zone,
-		"--tunnel-through-iap",
-		srcFile,
-		destFile)
-
-	output, err := finalSCPCmd.CombinedOutput()
-	scpOutput := strings.TrimSpace(string(output))
-	filteredSCPOutput := FilterSSHOutput(scpOutput)
-	WriteToLog(string(filteredSCPOutput))
-	if err != nil {
-		WriteToLog(fmt.Sprintf("Error running SCP: %v", err))
-		return filteredSCPOutput, false
+func parseWithFallback(input string, formats []string) (time.Time, string, error) {
+	for _, layout := range formats {
+		t, err := time.Parse(layout, input)
+		if err == nil {
+			return t, layout, nil
+		}
 	}
-
-	return filteredSCPOutput, true
+	return time.Time{}, "", errors.New("no matching time format found")
 }
 
-// LogProcessor is a callback function passed by the caller.
-// It returns the formatted slice of strings to store, and a boolean indicating if it should be included.
-type LogProcessor func(entry *logging.Entry) ([]string, bool)
+// SearchByColumn1 searches for a target string in the second column (index 1).
+// It returns the found row and true, or nil and false if not found.
+func SearchByColumn1(data [][]string, target string) ([]string, bool) {
+	for _, row := range data {
+		// SAFETY CHECK: Ensure the row has at least 2 columns (indices 0 and 1)
+		// If we don't check this, a short row will cause a "panic: index out of range"
+		if len(row) > 1 {
 
-// SearchLogsCore executes a log search using the GCP SDK.
-// It delegates all parsing and filtering logic to the provided LogProcessor callback.
-func SearchLogsCore(ctx context.Context, projectID string, filter string, maxResults int, processor LogProcessor) (string, [][]string, bool) {
-	WriteToLog("-------------------SearchLogsCore()-------------------")
+			// Option A: Exact Match (Case-Sensitive)
+			if row[1] == target {
+				return row, true
+			}
 
-	client, err := logadmin.NewClient(ctx, projectID)
-	if err != nil {
-		WriteToLog("Could not create logging client")
-		return fmt.Sprintf("Could not create logging client: %v", err), nil, false
-	}
-	defer client.Close()
-
-	it := client.Entries(ctx, logadmin.Filter(filter))
-
-	countResults := 0
-	var searchResults [][]string
-
-	for {
-		entry, err := it.Next()
-		if err == iterator.Done {
-			break
-		}
-		if err != nil {
-			return fmt.Sprintf("Could not iterate over search results: %v", err), nil, false
-		}
-
-		// Let the callback function decide how to parse the entry, and if we should include it
-		row, include := processor(entry)
-		if include {
-			searchResults = append(searchResults, row)
-			countResults++
-		}
-
-		if countResults >= maxResults {
-			break
+			// Option B: Case-Insensitive Match (Uncomment to use)
+			// if strings.EqualFold(row[1], target) {
+			// 	return row, true
+			// }
 		}
 	}
-
-	return "Search completed", searchResults, len(searchResults) > 0
+	return nil, false
 }
 
-// GetPayloadString extracts string content from either text or JSON payloads.
-// Exported so the caller's callback function can use it.
-func GetPayloadString(entry *logging.Entry) string {
-	switch p := entry.Payload.(type) {
-	case string:
-		return p
-	case *structpb.Struct:
-		if val, ok := p.Fields["message"]; ok {
-			return val.GetStringValue()
+// getLastLines scans the string and keeps a rolling slice of the last n lines.
+func GetLastLines(s string, n int) string {
+	var lines []string
+
+	// Use a scanner to read the string line by line
+	scanner := bufio.NewScanner(strings.NewReader(s))
+	for scanner.Scan() {
+		// Append the new line
+		lines = append(lines, scanner.Text())
+
+		// If we have more than n lines, drop the oldest one (at the front)
+		if len(lines) > n {
+			lines = lines[1:]
 		}
-		if val, ok := p.Fields["log"]; ok {
-			return val.GetStringValue()
-		}
-		return p.String()
-	default:
-		return fmt.Sprintf("%v", p)
 	}
+	// We ignore scanner.Err() for this example
+
+	// Join the remaining lines back together
+	return strings.Join(lines, "\n")
+}
+
+func DeleteFile(filePathName string) bool {
+	err := os.Remove(filePathName)
+	if err != nil {
+		WriteToLog(fmt.Sprintf("Failed to delete file: %s", filePathName))
+		return false
+	}
+	return true
+}
+
+// dirExists checks if a directory exists at the given path.
+func CheckFileOrDirExists(path string, checkIfItsDir bool) bool {
+	// 1. Get FileInfo for the path.
+	info, err := os.Stat(path)
+
+	if err == nil {
+		// 2. Path exists. Check if it's a directory.
+		if checkIfItsDir {
+			if info.IsDir() {
+				WriteToLog(fmt.Sprintf("Directory exists: %s", path))
+				return true
+			}
+
+			// Path exists but is a file, not a directory.
+			WriteToLog(fmt.Sprintf("Path exists, but its not a directory: %s", path))
+			return false
+		}
+		// Its a file and it exists
+		WriteToLog(fmt.Sprintf("Path exists, its a file: %s", path))
+		return true
+	}
+
+	// 3. Path does not exist.
+	if os.IsNotExist(err) {
+		WriteToLog(fmt.Sprintf("File or Directory does NOT exist: %s", path))
+		return false
+	}
+
+	WriteToLog(fmt.Sprintf("Cannot determine if directory exists: %s", path))
+
+	// 4. A different error occurred (e.g., permission issue).
+	return false
+}
+
+func QueryURLAndGetResult(authToken string, url string) (string, bool) {
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		WriteToLog(fmt.Sprintf("Could create HTTP request object to to URL: %s", url))
+		return "", false
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	authHeader := fmt.Sprintf("Bearer %s", authToken)
+	req.Header.Set("Authorization", authHeader)
+	client := &http.Client{
+		Timeout: 30 * time.Second, // Set a reasonable timeout.
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		WriteToLog("Could not making HTTP request to URL: " + url)
+		return "", false
+	}
+	// Defer the closing of the response body.
+	// This is important to free up network resources.
+	defer resp.Body.Close()
+
+	// Check the status code
+	if resp.StatusCode != http.StatusOK {
+		WriteToLog("http.Get() did NOT return StatusOK")
+		return "", false
+	}
+
+	// Read the response body
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		WriteToLog("io.ReadAll(body) returned error. Returning ERROR")
+		return "", false
+	}
+
+	bodyString := string(body)
+	return bodyString, true
+}
+
+// containsAny checks if a string contains any of the substrings.
+func StringMatchesAnySubstring(s string, substrings []string) bool {
+	for _, sub := range substrings {
+		if strings.Contains(s, sub) {
+			return true // Found a match
+		}
+	}
+	return false // No matches found
+}
+
+// contains checks if an integer is present in a slice.
+func IntArrContains(s []int, e int) bool {
+	for _, a := range s {
+		if a == e {
+			return true
+		}
+	}
+	return false
+}
+
+func CreateScratchDir() bool {
+	if CheckFileOrDirExists(LOCAL_HOST_SCRATCH_DIR, true) {
+		return true
+	}
+	err := os.MkdirAll(LOCAL_HOST_SCRATCH_DIR, 0755)
+	if err != nil {
+		WriteToLog(fmt.Sprintf("Failed to create scratch directory: %s %v", LOCAL_HOST_SCRATCH_DIR, err))
+		return false
+	}
+	return true
+}
+
+func SlurpFile(fileName string) (string, error) {
+	content, err := os.ReadFile(fileName)
+	if err != nil {
+		return "", err
+	}
+	return string(content), nil
 }
