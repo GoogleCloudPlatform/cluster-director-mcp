@@ -19,7 +19,7 @@ distro==1.9.0
 docstring_parser==0.17.0
 durationpy==0.10
 filelock==3.20.3
-flatbuffers==25.9.23
+flatbuffers==25.12.19
 frozenlist==1.8.0
 fsspec==2025.10.0
 google-api-core==2.28.1
