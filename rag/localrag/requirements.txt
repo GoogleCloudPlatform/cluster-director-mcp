@@ -54,7 +54,7 @@ jsonschema==4.25.1
 jsonschema-specifications==2025.9.1
 kubernetes==34.1.0
 langchain==1.0.5
-langchain-classic==1.0.1
+langchain-classic==1.0.7
 langchain-community==0.4.1
 langchain-core==1.2.7
 langchain-google-vertexai==3.0.3
