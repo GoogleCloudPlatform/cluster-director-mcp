@@ -59,7 +59,7 @@ langchain-community==0.4.1
 langchain-core==1.2.7
 langchain-google-vertexai==3.0.3
 langchain-text-splitters==1.0.0
-langgraph==1.0.5
+langgraph==1.0.10
 langgraph-checkpoint==3.0.1
 langgraph-prebuilt==1.0.5
 langgraph-sdk==0.2.10
