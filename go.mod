@@ -2,7 +2,7 @@ module cluster-director-mcp
 
 go 1.24.0
 
-toolchain go1.24.5
+toolchain go1.27.1
 
 require (
 	github.com/mark3labs/mcp-go v0.32.0
