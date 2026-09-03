@@ -22,7 +22,7 @@ filelock==3.20.3
 flatbuffers==25.9.23
 frozenlist==1.8.0
 fsspec==2025.10.0
-google-api-core==2.28.1
+google-api-core==2.36.0
 google-auth==2.43.0
 google-cloud-aiplatform==1.128.0
 google-cloud-bigquery==3.38.0
