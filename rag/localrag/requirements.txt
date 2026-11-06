@@ -73,7 +73,7 @@ multidict==6.7.0
 mypy_extensions==1.1.0
 numexpr==2.14.1
 numpy==2.3.5
-oauthlib==3.3.1
+oauthlib==4.0.1
 onnxruntime==1.23.2
 opentelemetry-api==1.38.0
 opentelemetry-exporter-otlp-proto-common==1.38.0
